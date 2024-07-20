@@ -343,6 +343,7 @@ static int ip_frag_queue(struct ipq *qp, struct sk_buff *skb)
 	struct sk_buff *prev, *next;
 	struct net_device *dev;
 	unsigned int fragsize;
+	int ihl, end, skb1_run_end;
 	int flags, offset;
 	int err = -ENOENT;
 	u8 ecn;
