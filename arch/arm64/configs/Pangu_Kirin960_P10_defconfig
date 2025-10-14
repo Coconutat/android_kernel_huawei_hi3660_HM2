@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/arm64 4.9.148 Kernel Configuration
+# Linux/arm64 4.9.156 Kernel Configuration
 #
 CONFIG_ARM64=y
 CONFIG_64BIT=y
@@ -5372,6 +5372,19 @@ CONFIG_OASES_STATIC_PLTS=y
 CONFIG_HW_RECLAIM_ACCT=y
 CONFIG_OAE_FW_PATCH=y
 CONFIG_OAE_DM_ROOT=y
+
+#
+# KernelSU
+#
+CONFIG_KSU=y
+# CONFIG_KSU_DEBUG is not set
+CONFIG_KSU_THRONE_TRACKER_LEGACY=y
+CONFIG_KSU_ALLOWLIST_WORKAROUND=y
+# CONFIG_KSU_CMDLINE is not set
+# CONFIG_KPM is not set
+# CONFIG_KSU_LSM_SECURITY_HOOKS is not set
+# CONFIG_KSU_TRACEPOINT_HOOK is not set
+CONFIG_KSU_MANUAL_HOOK=y
 
 #
 # Firmware Drivers
