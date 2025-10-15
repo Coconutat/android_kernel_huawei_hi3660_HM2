@@ -1179,20 +1179,42 @@ static int override_release(char __user *release, size_t len)
 	return ret;
 }
 
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+extern void susfs_spoof_uname(struct new_utsname* tmp);
+#endif
+
+
 SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 {
-	int errno = 0;
+    // [修改点 1] 声明一个内核临时的结构体，用于在内核空间进行修改（欺骗）
+    struct new_utsname tmp;
+    int errno = 0;
 
-	down_read(&uts_sem);
-	if (copy_to_user(name, utsname(), sizeof *name))
-		errno = -EFAULT;
-	up_read(&uts_sem);
+    down_read(&uts_sem);
+    
+    // [修改点 2] 将 utsname 数据从全局变量复制到内核临时结构体 'tmp'
+    memcpy(&tmp, utsname(), sizeof(tmp));
 
-	if (!errno && override_release(name->release, sizeof(name->release)))
-		errno = -EFAULT;
-	if (!errno && override_architecture(name))
-		errno = -EFAULT;
-	return errno;
+    // [修改点 3] 补丁核心逻辑：如果定义了 KSU 欺骗宏，则调用欺骗函数
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+    susfs_spoof_uname(&tmp);
+#endif
+    up_read(&uts_sem);
+    
+    // [修改点 4] 将修改后的临时结构体 'tmp' 复制到用户空间
+    // 如果复制失败，根据补丁的风格直接返回 -EFAULT
+    if (copy_to_user(name, &tmp, sizeof(tmp)))
+        return -EFAULT; 
+    
+    // [原代码保留] 
+    // 原始代码中的 override_release 和 override_architecture 逻辑
+    // 必须保留在 copy_to_user 之后，因为它们操作的是用户空间指针 'name'
+    if (!errno && override_release(name->release, sizeof(name->release)))
+        errno = -EFAULT;
+    if (!errno && override_architecture(name))
+        errno = -EFAULT;
+        
+    return errno;
 }
 
 #ifdef __ARCH_WANT_SYS_OLD_UNAME
