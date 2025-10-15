@@ -8,5 +8,5 @@ export CROSS_COMPILE=aarch64-linux-android-
 export ARCH=arm64
 # export DTC_EXT=dtc
 
-make ARCH=arm64 O=out Pangu_Kirin960_P10_susfs_defconfig
+make ARCH=arm64 O=out Pangu_Kirin960_P10_defconfig
 make ARCH=arm64 O=out menuconfig
