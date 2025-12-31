@@ -18,10 +18,6 @@
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
 
-#if defined(CONFIG_KSU) && defined(CONFIG_KSU_TRACEPOINT_HOOK)
-#include <../drivers/kernelsu/ksu_trace.h>
-#endif
-
 void generic_fillattr(struct inode *inode, struct kstat *stat)
 {
 	stat->dev = inode->i_sb->s_dev;
@@ -91,12 +87,20 @@ int vfs_fstat(unsigned int fd, struct kstat *stat)
 }
 EXPORT_SYMBOL(vfs_fstat);
 
+#ifdef CONFIG_KSU 
+extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
+#endif
+
 int vfs_fstatat(int dfd, const char __user *filename, struct kstat *stat,
 		int flag)
 {
 	struct path path;
 	int error = -EINVAL;
 	unsigned int lookup_flags = 0;
+
+	#ifdef CONFIG_KSU 
+	ksu_handle_stat(&dfd, &filename, &flag);
+	#endif
 
 	if ((flag & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
 		      AT_EMPTY_PATH)) != 0)
@@ -298,10 +302,6 @@ SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
 	struct kstat stat;
 	int error;
 
-	#if defined(CONFIG_KSU) && defined(CONFIG_KSU_TRACEPOINT_HOOK)
-		trace_ksu_trace_stat_hook(&dfd, &filename, &flag);
-	#endif
-
 	error = vfs_fstatat(dfd, filename, &stat, flag);
 	if (error)
 		return error;
@@ -443,10 +443,6 @@ SYSCALL_DEFINE4(fstatat64, int, dfd, const char __user *, filename,
 {
 	struct kstat stat;
 	int error;
-
-	#if defined(CONFIG_KSU) && defined(CONFIG_KSU_TRACEPOINT_HOOK)
-		trace_ksu_trace_stat_hook(&dfd, &filename, &flag); /* 32-bit su support */
-	#endif
 
 	error = vfs_fstatat(dfd, filename, &stat, flag);
 	if (error)
