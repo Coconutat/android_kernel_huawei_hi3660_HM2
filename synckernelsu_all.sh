@@ -8,7 +8,7 @@ else
     echo "KernelSU Folder not found, proceeding..."
 fi
 
-read -p "Please enter the version number (A/a is tags version.B/b is main version.C/c is special v0.9.2 Version For Huawei.D/d is SukiSU builtin.): " version
+read -p "Please enter the version number (A/a is tags version.B/b is main version.C/c is special v0.9.2 Version For Huawei.D/d is SukiSU builtin.E/e s SukiSU tmp-builtin): " version
 
 if [ "$version" == "" ]; then
     echo "No version specified. Exiting."
@@ -28,6 +28,10 @@ case $version in
         ;;
     [Dd]*)
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+        ;;
+    *)
+    [Ee]*)
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s tmp-builtin
         ;;
     *)
         echo "Invalid option. Exiting."
