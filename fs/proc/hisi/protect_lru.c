@@ -345,7 +345,7 @@ static int sysctl_protect_max_mbytes_handler(struct ctl_table *table, int write,
 				break;
 #else
 				unsigned long prot_pages = (u64)zone->managed_pages * total_prot_pages
-						/ totalram_pages();
+						/ totalram_pages;
 				lruvec = &zone->lruvec;
 				lruvec->heads[i].max_pages = prot_pages;
 #endif
@@ -494,8 +494,8 @@ bool protect_file_is_full(struct lruvec *lruvec)
 	for (i = 0; i < PROTECT_HEAD_END; i++) {
 		cur = lruvec->heads[i].pages;
 		max = lruvec->heads[i].max_pages;
-		if (cur > totalram_pages()) {
-			pr_err("protect lru cur larger then totalram_pages()");
+		if (cur > totalram_pages) {
+			pr_err("protect lru cur larger then totalram_pages");
 		}
 		if (cur && cur > max)
 			return true;
@@ -554,7 +554,7 @@ static int __init protect_lru_init(void)
 		total_prot_pages = protect_max_mbytes[i] << (20 - PAGE_SHIFT);
 		for_each_populated_zone(zone) {
 			prot_pages = (u64)zone->managed_pages * total_prot_pages
-					/ totalram_pages();
+					/ totalram_pages;
 #if(LINUX_VERSION_CODE >= KERNEL_VERSION(4,9,0))
 			lruvec = &zone->zone_pgdat->lruvec;
 #else
@@ -563,7 +563,7 @@ static int __init protect_lru_init(void)
 			lruvec->heads[i].max_pages = prot_pages;
 		}
 	}
-	pr_err("protect_lru_init phone_total_pages:%lu",totalram_pages());
+	pr_err("protect_lru_init phone_total_pages:%lu",totalram_pages);
 
 	return 0;
 }

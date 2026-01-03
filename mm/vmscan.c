@@ -4061,7 +4061,7 @@ int sysctl_shrinkmem_handler(struct ctl_table *table, int write,
 		int free_ratio = sysctl_shrink_memory;
 		if (sysctl_shrink_memory == 1)
 			free_ratio = DEFAULT_FREE_RATIO;
-		shrink_all_memory(totalram_pages()*free_ratio/100);
+		shrink_all_memory(totalram_pages*free_ratio/100);
 	}
 	return 0;
 }

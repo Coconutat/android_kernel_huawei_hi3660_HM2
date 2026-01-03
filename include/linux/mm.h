@@ -1986,7 +1986,7 @@ extern unsigned long free_reserved_area(void *start, void *end,
 #ifdef	CONFIG_HIGHMEM
 /*
  * Free a highmem page into the buddy system, adjusting totalhigh_pages
- * and totalram_pages().
+ * and totalram_pages.
  */
 extern void free_highmem_page(struct page *page);
 #endif

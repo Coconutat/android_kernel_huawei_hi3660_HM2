@@ -126,4 +126,3 @@ Image.gz*
 drivers/input/sensors/smi130/modules.order
 *test_defconfig
 *.img
-fix_*.py
