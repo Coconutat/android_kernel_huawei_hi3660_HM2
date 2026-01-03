@@ -360,7 +360,7 @@ OAL_STATIC OAL_INLINE oal_int32  oal_file_read(oal_file_stru *file,
 		                                         oal_int8 *pc_buf,
 		                                         oal_uint32 ul_count)
 {
-    return kernel_read(file, 0, pc_buf, ul_count);
+    return kernel_read(file, pc_buf, ul_count, (loff_t[]){0});
 }
 
 

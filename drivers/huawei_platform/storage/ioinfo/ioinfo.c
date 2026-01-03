@@ -564,7 +564,7 @@ static int io_dev_get_devstats(struct io_diskstats *pio_d)
         return ret;
     }
 
-    ret = kernel_read(filp, 0, buf, IOSTAT_BUFLEN);
+    ret = kernel_read(filp, buf, IOSTAT_BUFLEN, (loff_t[]){0});
     if (ret > 0)
     {
         sscanf(buf, "%lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu", \

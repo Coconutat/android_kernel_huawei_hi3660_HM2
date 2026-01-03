@@ -1609,7 +1609,7 @@ int32 do_ssi_file_test(ssi_file_st *file_st, ssi_trans_test_st* pst_ssi_test)
     while(1)
     {
         data_buf = 0;
-        rdlen = kernel_read(fp, fp->f_pos, (uint8 *)&data_buf, 2);
+        rdlen = kernel_read(fp, (uint8 *)&data_buf, 2, &fp->f_pos);
         if (rdlen > 0)
         {
             fp->f_pos += rdlen;

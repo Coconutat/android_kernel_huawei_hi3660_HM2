@@ -4026,7 +4026,7 @@ out:
     soc_new = bound_soc(soc_new);
     return soc_new;
 }
-/* 电量平滑修正*/
+/* 平*/
 /*******************************************************
   Function:        limit_soc
   Description:     limt soc
@@ -4350,7 +4350,7 @@ static int calculate_state_of_charge(struct smartstar_coul_device *di)
     /* calculate remaining usable charge */
     //eco_leak_uah = calculate_eco_leak_uah();
 
-	/* 退出ECO模式后 */
+	/* 顺ECO模式 */
     //remaining_charge_uah = remaining_charge_uah - eco_leak_uah;
 
     remaining_usable_charge_uah = remaining_charge_uah
@@ -7676,7 +7676,7 @@ static void update_polar_ocv(struct smartstar_coul_device *di,
     unsigned long sample_time_rtc = 0;
     if (NULL == di)
         return;
-    /*判断eco数据是否被清空*/
+    /*卸eco欠*/
     di->coul_dev_ops->get_eco_sample_flag(&eco_sample_flag);
     current_sec = di->coul_dev_ops->get_coul_time();
     coul_core_debug("[%s]vbat:0x%x, ibat:0x%x\n",
@@ -8816,7 +8816,7 @@ static void basp_read_pdt_para_work(struct work_struct *work)
 		coul_core_err("Open %s failed in %s\n", BASP_PDT_PARA_FILE, __func__);
 		goto basp_para_buff_free;
 	}
-	read_size = kernel_read(fp, 0, buff, sizeof(basp_pdt_para) + 1);
+	read_size = kernel_read(fp, buff, sizeof(basp_pdt_para) + 1, (loff_t[]){0});
 	filp_close(fp, NULL);
 	fp = NULL;
 	if (read_size == sizeof(basp_pdt_para)) {
@@ -9414,7 +9414,7 @@ static void isc_hist_info_init(struct work_struct *work)
         goto isc_splash2_mount_file;
     }
     whence = 0;
-    while((read_size = kernel_read(fd, fd->f_pos, buff + whence, MOUNTS_INFO_FILE_MAX_SIZE - whence)) > 0) {
+    while((read_size = kernel_read(fd, buff + whence, MOUNTS_INFO_FILE_MAX_SIZE - whence, &fd->f_pos)) > 0) {
         find_str = strstr(buff, SPLASH2_MOUNT_INFO);
         if(find_str) {
             break;
@@ -9463,7 +9463,7 @@ static void isc_hist_info_init(struct work_struct *work)
         coul_core_err("Open and create %s failed in %s.\n", ISC_DATA_FILE, __func__);
         goto isc_init_buff_free;
     }
-    read_size = kernel_read(fd, 0, buff, sizeof(isc_history)+1);
+    read_size = kernel_read(fd, buff, sizeof(isc_history)+1, (loff_t[]){0});
     filp_close(fd, NULL);
     if(read_size == sizeof(isc_history)) {
         coul_core_info("fatal isc datum file size was correct.\n");
@@ -9510,7 +9510,7 @@ static void isc_hist_info_init(struct work_struct *work)
         coul_core_err("Open and create %s failed in %s.\n", ISC_CONFIG_DATA_FILE, __func__);
         goto isc_init_buff_free;
     }
-    read_size = kernel_read(fd, 0, buff, sizeof(isc_config)+1);
+    read_size = kernel_read(fd, buff, sizeof(isc_config)+1, (loff_t[]){0});
     filp_close(fd, NULL);
     if (read_size == (int)sizeof(isc_config)) {
         coul_core_info("fatal isc config datum file size was correct.\n");
