@@ -9387,7 +9387,7 @@ oal_int32 oal_pcie_loadfile(oal_pcie_res* pst_pcie_res, char* file_name, oal_uin
 
     for(;;)
     {
-        rlen = kernel_read(fp, fp->f_pos, (void*)pst_buf, PAGE_SIZE);
+        rlen = kernel_read(fp, (void*)pst_buf, PAGE_SIZE, &fp->f_pos);
         if(rlen <= 0)
         {
             break;
