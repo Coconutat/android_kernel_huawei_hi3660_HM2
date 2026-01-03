@@ -483,9 +483,9 @@ static void rcc_setup(struct rcc_module *rcc)
 	rcc->free_pages_min = RCC_FREE_PAGE_MIN;
 	rcc->full_clean_file_pages = RCC_FULL_CLEAN_FILE_PAGE;
 
-	if (totalram_pages > 3 * TOTAL_RAM_PAGES_1G) /* >3g */
+	if (totalram_pages() > 3 * TOTAL_RAM_PAGES_1G) /* >3g */
 		rcc->anon_pages_min = RCC_ANON_PAGE_MIN + 2 * RCC_ANON_PAGE_RAM_GAP;
-	else if (totalram_pages > 2 * TOTAL_RAM_PAGES_1G) /* 3g */
+	else if (totalram_pages() > 2 * TOTAL_RAM_PAGES_1G) /* 3g */
 		rcc->anon_pages_min = RCC_ANON_PAGE_MIN + RCC_ANON_PAGE_RAM_GAP;
 	else /*1g 2g*/
 		rcc->anon_pages_min = RCC_ANON_PAGE_MIN;
@@ -797,7 +797,7 @@ static ssize_t avail_target_store(struct kobject *kobj,
 		return -EINVAL;
 
 	size = size << (20 - PAGE_SHIFT); /* mb to page */
-	if (size > totalram_pages * 4)
+	if (size > totalram_pages() * 4)
 		return -EINVAL;
 	rcc->avail_target_pages = size;
 	return len;
@@ -824,7 +824,7 @@ static ssize_t anon_target_store(struct kobject *kobj,
 		return -EINVAL;
 
 	size = size << (20 - PAGE_SHIFT); /* mb to page */
-	if (size > totalram_pages * 4)
+	if (size > totalram_pages() * 4)
 		return -EINVAL;
 	rcc->anon_pages_min = size;
 	rcc->anon_pages_max = rcc->anon_pages_min + RCC_ANON_PAGE_START_GAP;
@@ -856,7 +856,7 @@ static ssize_t force_once_store(struct kobject *kobj,
 		return -EINVAL;
 
 	size = size << (20 - PAGE_SHIFT); /* mb to page */
-	if (size > totalram_pages * 4)
+	if (size > totalram_pages() * 4)
 		return -EINVAL;
 	rcc->force_once_pages = size;
 	rcc->force_compress_flag = 1;

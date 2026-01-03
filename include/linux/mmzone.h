@@ -462,10 +462,10 @@ struct zone {
 	 * present_pages should get_online_mems() to get a stable value.
 	 *
 	 * Read access to managed_pages should be safe because it's unsigned
-	 * long. Write access to zone->managed_pages and totalram_pages are
+	 * long. Write access to zone->managed_pages and totalram_pages() are
 	 * protected by managed_page_count_lock at runtime. Idealy only
 	 * adjust_managed_page_count() should be used instead of directly
-	 * touching zone->managed_pages and totalram_pages.
+	 * touching zone->managed_pages and totalram_pages().
 	 */
 	unsigned long		managed_pages;
 	unsigned long		spanned_pages;

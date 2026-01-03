@@ -87,29 +87,29 @@ static inline bool sb_rdonly(const struct super_block *sb) {
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 12, 0))
 
-static inline void *kvmalloc(size_t size, gfp_t flags)
-{
-	void *buffer = NULL;
+/* static inline void *kvmalloc_UNUSED(size_t size, gfp_t flags) */
+// {
+// 	void *buffer = NULL;
+// 
+// 	if (size == 0)
+// 		return NULL;
+// 
+// 	/* do not attempt kmalloc if we need more than 16 pages at once */
+// 	if (size <= (16 * PAGE_SIZE))
+// 		buffer = kmalloc(size, flags);
+// 	if (!buffer) {
+// 		if (flags & __GFP_ZERO)
+// 			buffer = vzalloc(size);
+// 		else
+// 			buffer = vmalloc(size);
+/* } */
+/* FIXED_BY_SCRIPT: return buffer; */
+/* FIXED_BY_SCRIPT: } */
 
-	if (size == 0)
-		return NULL;
-
-	/* do not attempt kmalloc if we need more than 16 pages at once */
-	if (size <= (16 * PAGE_SIZE))
-		buffer = kmalloc(size, flags);
-	if (!buffer) {
-		if (flags & __GFP_ZERO)
-			buffer = vzalloc(size);
-		else
-			buffer = vmalloc(size);
-	}
-	return buffer;
-}
-
-static inline void *kvzalloc(size_t size, gfp_t flags)
-{
-	return kvmalloc(size, flags | __GFP_ZERO);
-}
+/* static inline void *kvzalloc_UNUSED(size_t size, gfp_t flags) */
+// {
+// 	return kvmalloc(size, flags | __GFP_ZERO);
+/* } */
 
 static inline void *kvmalloc_array(size_t n, size_t size, gfp_t flags)
 {

@@ -18,7 +18,6 @@
 #include <linux/interrupt.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#include <linux/set_memory.h>
 #include <linux/debugobjects.h>
 #include <linux/kallsyms.h>
 #include <linux/list.h>
@@ -32,8 +31,6 @@
 #include <linux/compiler.h>
 #include <linux/llist.h>
 #include <linux/bitops.h>
-#include <linux/overflow.h>
-#include <linux/rbtree_augmented.h>
 #include <linux/hisi/rdr_hisi_ap_hook.h>
 #include <linux/hisi/page_tracker.h>
 
@@ -42,6 +39,326 @@
 #include <asm/shmparam.h>
 
 #include "internal.h"
+
+
+/* === KERNELSU ALLOCATOR START === */
+#include <linux/rbtree_augmented.h>
+#include <linux/set_memory.h>
+#include <asm/tlbflush.h>
+
+/* 重新定义变量，稍后会屏蔽旧的 */
+static __maybe_unused DEFINE_SPINLOCK(vmap_area_lock);
+static __maybe_unused DEFINE_SPINLOCK(free_vmap_area_lock);
+LIST_HEAD(vmap_area_list);
+static LLIST_HEAD(vmap_purge_list);
+static struct rb_root vmap_area_root = RB_ROOT;
+static struct rb_root free_vmap_area_root = RB_ROOT;
+static LIST_HEAD(free_vmap_area_list);
+static bool vmap_initialized __read_mostly;
+static BLOCKING_NOTIFIER_HEAD(vmap_notify_list);
+static unsigned long vmap_area_pcpu_hole;
+static struct kmem_cache *vmap_area_cachep;
+
+/* KernelSU Helpers */
+static __always_inline unsigned long va_size(struct vmap_area *va)
+{
+	return (va->va_end - va->va_start);
+}
+
+static __always_inline unsigned long get_subtree_max_size(struct rb_node *node)
+{
+	struct vmap_area *va;
+	if (!node) return 0;
+	va = rb_entry(node, struct vmap_area, rb_node);
+	return va->subtree_max_size;
+}
+
+static __always_inline unsigned long compute_subtree_max_size(struct vmap_area *va)
+{
+	return max3(va_size(va),
+		get_subtree_max_size(va->rb_node.rb_left),
+		get_subtree_max_size(va->rb_node.rb_right));
+}
+
+RB_DECLARE_CALLBACKS(static, free_vmap_area_rb_augment_cb,
+	struct vmap_area, rb_node, unsigned long, subtree_max_size, compute_subtree_max_size)
+
+/* 前向声明 */
+static void purge_vmap_area_lazy(void);
+
+/* 核心分配逻辑 */
+
+static void __maybe_unused __insert_vmap_area(struct vmap_area *va)
+{
+	struct rb_node **link = &vmap_area_root.rb_node;
+	struct rb_node *parent = NULL;
+	struct vmap_area *tmp;
+	while (*link) {
+		parent = *link;
+		tmp = rb_entry(parent, struct vmap_area, rb_node);
+		if (va->va_start < tmp->va_end)
+			link = &(*link)->rb_left;
+		else if (va->va_end > tmp->va_start)
+			link = &(*link)->rb_right;
+		else
+			BUG();
+	}
+	rb_link_node(&va->rb_node, parent, link);
+	rb_insert_color(&va->rb_node, &vmap_area_root);
+}
+
+static void __maybe_unused link_va(struct vmap_area *va, struct rb_root *root,
+	struct rb_node *parent, struct rb_node **link, struct list_head *head)
+{
+	if (likely(parent)) {
+		struct vmap_area *parent_va = rb_entry(parent, struct vmap_area, rb_node);
+		if (parent->rb_right == *link)
+			list_add(&va->list, &parent_va->list);
+		else
+			list_add_tail(&va->list, &parent_va->list);
+	} else {
+		if (list_empty(head))
+			list_add(&va->list, head);
+		else
+			list_add(&va->list, head->prev);
+	}
+	rb_link_node(&va->rb_node, parent, link);
+	if (root == &free_vmap_area_root) {
+		rb_insert_augmented(&va->rb_node, root, &free_vmap_area_rb_augment_cb);
+		va->subtree_max_size = 0;
+	} else {
+		rb_insert_color(&va->rb_node, root);
+	}
+}
+
+static __always_inline void __maybe_unused unlink_va(struct vmap_area *va, struct rb_root *root)
+{
+	if (!RB_EMPTY_NODE(&va->rb_node)) {
+		if (root == &free_vmap_area_root)
+			rb_erase_augmented(&va->rb_node, root, &free_vmap_area_rb_augment_cb);
+		else
+			rb_erase(&va->rb_node, root);
+		RB_CLEAR_NODE(&va->rb_node);
+		list_del_init(&va->list);
+	}
+}
+
+static void __maybe_unused insert_vmap_area(struct vmap_area *va,
+	struct rb_root *root, struct list_head *head)
+{
+	struct rb_node **link;
+	struct rb_node *parent = NULL;
+	struct vmap_area *tmp_va; /* 修复变量名 */
+	link = &root->rb_node;
+	while (*link) {
+		parent = *link;
+		tmp_va = rb_entry(parent, struct vmap_area, rb_node);
+		if (va->va_start < tmp_va->va_end) /* 修复 tmp -> tmp_va */
+			link = &(*link)->rb_left;
+		else if (va->va_end > tmp_va->va_start) /* 修复 tmp -> tmp_va */
+			link = &(*link)->rb_right;
+		else
+			BUG();
+	}
+	link_va(va, root, parent, link, head);
+}
+
+static void __maybe_unused insert_vmap_area_augment(struct vmap_area *va,
+	struct rb_node *from, struct rb_root *root, struct list_head *head)
+{
+	struct rb_node **link;
+	struct rb_node *parent = NULL;
+	if (from) {
+		struct vmap_area *tmp_va = rb_entry(from, struct vmap_area, rb_node);
+		if (va->va_start < tmp_va->va_end)
+			link = &from->rb_left;
+		else if (va->va_end > tmp_va->va_start)
+			link = &from->rb_right;
+		else
+			BUG();
+		parent = from;
+		goto found;
+	}
+	link = &root->rb_node;
+	while (*link) {
+		parent = *link;
+		if (va->va_start < rb_entry(parent, struct vmap_area, rb_node)->va_end)
+			link = &(*link)->rb_left;
+		else
+			link = &(*link)->rb_right;
+	}
+found:
+	link_va(va, root, parent, link, head);
+}
+
+static void __maybe_unused merge_or_add_vmap_area(struct vmap_area *va,
+	struct rb_root *root, struct list_head *head)
+{
+	struct vmap_area *sibling;
+	struct list_head *next;
+	struct rb_node **link;
+	struct rb_node *parent = NULL;
+	bool merged = false;
+	link = &root->rb_node;
+	while (*link) {
+		parent = *link;
+		sibling = rb_entry(parent, struct vmap_area, rb_node);
+		if (va->va_start < sibling->va_end)
+			link = &(*link)->rb_left;
+		else if (va->va_end > sibling->va_start)
+			link = &(*link)->rb_right;
+		else
+			BUG();
+	}
+	if (!parent) goto insert;
+	sibling = rb_entry(parent, struct vmap_area, rb_node);
+	next = &sibling->list;
+	if (parent->rb_right == *link)
+		next = next->next;
+	if (next != head) {
+		sibling = list_entry(next->prev, struct vmap_area, list);
+		if (sibling->va_end == va->va_start) {
+			merged = true;
+			sibling->va_end = va->va_end;
+			unlink_va(va, root);
+			kmem_cache_free(vmap_area_cachep, va);
+			va = sibling;
+		}
+	}
+	if (next->next != head) {
+		sibling = list_entry(next, struct vmap_area, list);
+		if (sibling->va_start == va->va_end) {
+			merged = true;
+			sibling->va_start = va->va_start;
+			unlink_va(va, root);
+			kmem_cache_free(vmap_area_cachep, va);
+		}
+	}
+insert:
+	if (!merged)
+		link_va(va, root, parent, link, head);
+}
+
+static __always_inline struct vmap_area *find_vmap_lowest_match(unsigned long size,
+	unsigned long align, unsigned long vstart)
+{
+	struct vmap_area *va;
+	struct rb_node *node;
+	unsigned long length;
+	node = free_vmap_area_root.rb_node;
+	length = size + align - 1;
+	while (node) {
+		va = rb_entry(node, struct vmap_area, rb_node);
+		if (get_subtree_max_size(node->rb_left) >= length && vstart < va->va_start) {
+			node = node->rb_left;
+		} else {
+			unsigned long nva_start_addr;
+			if (va->va_start > vstart)
+				nva_start_addr = ALIGN(va->va_start, align);
+			else
+				nva_start_addr = ALIGN(vstart, align);
+			if (nva_start_addr + size <= va->va_end && nva_start_addr >= vstart)
+				return va;
+			if (get_subtree_max_size(node->rb_right) >= length) {
+				node = node->rb_right;
+				continue;
+			}
+			while ((node = rb_parent(node))) {
+				va = rb_entry(node, struct vmap_area, rb_node);
+				if (va->va_start > vstart)
+					nva_start_addr = ALIGN(va->va_start, align);
+				else
+					nva_start_addr = ALIGN(vstart, align);
+				if (nva_start_addr + size <= va->va_end && nva_start_addr >= vstart)
+					return va;
+				if (get_subtree_max_size(node->rb_right) >= length && vstart <= va->va_start) {
+					node = node->rb_right;
+					break;
+				}
+			}
+		}
+	}
+	return NULL;
+}
+
+static struct vmap_area *__find_vmap_area(unsigned long addr)
+{
+	struct rb_node *n = vmap_area_root.rb_node;
+	while (n) {
+		struct vmap_area *va;
+		va = rb_entry(n, struct vmap_area, rb_node);
+		if (addr < va->va_start)
+			n = n->rb_left;
+		else if (addr >= va->va_end)
+			n = n->rb_right;
+		else
+			return va;
+	}
+	return NULL;
+}
+
+static struct vmap_area *alloc_vmap_area(unsigned long size, unsigned long align,
+	unsigned long vstart, unsigned long vend, int node, gfp_t gfp_mask)
+{
+	struct vmap_area *va, *pva;
+	unsigned long addr;
+	int purged = 0;
+	BUG_ON(!size);
+	BUG_ON(offset_in_page(size));
+	BUG_ON(!is_power_of_2(align));
+	if (unlikely(!vmap_initialized)) return ERR_PTR(-EBUSY);
+	might_sleep();
+	va = kmem_cache_alloc_node(vmap_area_cachep, gfp_mask & GFP_RECLAIM_MASK, node);
+	if (unlikely(!va)) return ERR_PTR(-ENOMEM);
+	kmemleak_scan_area(&va->rb_node, SIZE_MAX, gfp_mask & GFP_RECLAIM_MASK);
+retry:
+	spin_lock(&vmap_area_lock);
+	pva = find_vmap_lowest_match(size, align, vstart);
+	if (!pva) goto overflow;
+	if (pva->va_start > vstart)
+		addr = ALIGN(pva->va_start, align);
+	else
+		addr = ALIGN(vstart, align);
+	if (addr + size > vend) goto overflow;
+	va->va_start = addr;
+	va->va_end = addr + size;
+	va->flags = 0;
+	unlink_va(pva, &free_vmap_area_root);
+	if (va->va_start > pva->va_start)
+		insert_vmap_area_augment(pva, &va->rb_node, &free_vmap_area_root, &free_vmap_area_list);
+	if (va->va_end < pva->va_end)
+		insert_vmap_area_augment(pva, &va->rb_node, &free_vmap_area_root, &free_vmap_area_list);
+	insert_vmap_area(va, &vmap_area_root, &vmap_area_list);
+	spin_unlock(&vmap_area_lock);
+	return va;
+overflow:
+	spin_unlock(&vmap_area_lock);
+	if (!purged) {
+		purge_vmap_area_lazy();
+		purged = 1;
+		goto retry;
+	}
+	if (gfpflags_allow_blocking(gfp_mask)) {
+		unsigned long freed = 0;
+		blocking_notifier_call_chain(&vmap_notify_list, 0, &freed);
+		if (freed > 0) {
+			purged = 0;
+			goto retry;
+		}
+	}
+	if (!(gfp_mask & __GFP_NOWARN) && printk_ratelimit())
+		pr_warn("vmalloc: allocation failure: %lu bytes\\n", size);
+	kmem_cache_free(vmap_area_cachep, va);
+	return ERR_PTR(-EBUSY);
+}
+
+static void __free_vmap_area(struct vmap_area *va)
+{
+	unlink_va(va, &vmap_area_root);
+	merge_or_add_vmap_area(va, &free_vmap_area_root, &free_vmap_area_list);
+}
+/* === KERNELSU ALLOCATOR END === */
+
 
 struct vfree_deferred {
 	struct llist_head list;
@@ -54,10 +371,12 @@ static void __vunmap(const void *, int);
 static void free_work(struct work_struct *w)
 {
 	struct vfree_deferred *p = container_of(w, struct vfree_deferred, wq);
-	struct llist_node *t, *llnode;
-
-	llist_for_each_safe(llnode, t, llist_del_all(&p->list))
-		__vunmap((void *)llnode, 1);
+	struct llist_node *llnode = llist_del_all(&p->list);
+	while (llnode) {
+		void *p = llnode;
+		llnode = llist_next(llnode);
+		__vunmap(p, 1);
+	}
 }
 
 /*** Page table manipulation functions ***/
@@ -288,285 +607,41 @@ EXPORT_SYMBOL(vmalloc_to_pfn);
 
 /*** Global kva allocator ***/
 
-#define DEBUG_AUGMENT_PROPAGATE_CHECK 0
-#define DEBUG_AUGMENT_LOWEST_MATCH_CHECK 0
-
-#define VM_LAZY_FREE	0x02
 #define VM_VM_AREA	0x04
 
+#if 0 /* DISABLED BY SURGICAL_FIX_V2 */
 static DEFINE_SPINLOCK(vmap_area_lock);
+#endif
 /* Export for kexec only */
+#if 0 /* DISABLED BY SURGICAL_FIX_V2 */
 LIST_HEAD(vmap_area_list);
+#endif
+#if 0 /* DISABLED BY SURGICAL_FIX_V2 */
 static LLIST_HEAD(vmap_purge_list);
+#endif
+#if 0 /* DISABLED BY SURGICAL_FIX_V2 */
 static struct rb_root vmap_area_root = RB_ROOT;
-static bool vmap_initialized __read_mostly;
+#endif
 
-/*
- * This kmem_cache is used for vmap_area objects. Instead of
- * allocating from slab we reuse an object from this cache to
- * make things faster. Especially in "no edge" splitting of
- * free block.
- */
-static struct kmem_cache *vmap_area_cachep;
+/* The vmap cache globals are protected by vmap_area_lock */
+#if 0 /* DISABLED BY SURGICAL_FIX_V2 */
+static struct rb_node *free_vmap_cache;
+#endif
+#if 0 /* DISABLED BY SURGICAL_FIX_V2 */
+static unsigned long cached_hole_size;
+#endif
+#if 0 /* DISABLED BY SURGICAL_FIX_V2 */
+static unsigned long cached_vstart;
+#endif
+#if 0 /* DISABLED BY SURGICAL_FIX_V2 */
+static unsigned long cached_align;
+#endif
 
-/*
- * This linked list is used in pair with free_vmap_area_root.
- * It gives O(1) access to prev/next to perform fast coalescing.
- */
-static LIST_HEAD(free_vmap_area_list);
+#if 0 /* DISABLED BY SURGICAL_FIX_V2 */
+static unsigned long vmap_area_pcpu_hole;
+#endif
 
-/*
- * This augment red-black tree represents the free vmap space.
- * All vmap_area objects in this tree are sorted by va->va_start
- * address. It is used for allocation and merging when a vmap
- * object is released.
- *
- * Each vmap_area node contains a maximum available free block
- * of its sub-tree, right or left. Therefore it is possible to
- * find a lowest match of free area.
- */
-static struct rb_root free_vmap_area_root = RB_ROOT;
-
-/*
- * Gets called when remove the node and rotate.
- */
-static __always_inline unsigned long
-compute_subtree_max_size(struct vmap_area *va)
-{
-	return max3(va_size(va),
-		get_subtree_max_size(va->rb_node.rb_left),
-		get_subtree_max_size(va->rb_node.rb_right));
-}
-
-RB_DECLARE_CALLBACKS(static, free_vmap_area_rb_augment_cb,
-	struct vmap_area, rb_node, subtree_max_size, compute_subtree_max_size)
-
-static void
-link_va(struct vmap_area *va, struct rb_root *root,
-	struct rb_node *parent, struct rb_node **link, struct list_head *head)
-{
-	/*
-	 * VA is still not in the list, but we can
-	 * identify its future previous list_head node.
-	 */
-	if (likely(parent)) {
-		struct vmap_area *parent_va = rb_entry(parent, struct vmap_area, rb_node);
-		if (parent->rb_right == *link)
-			list_add(&va->list, &parent_va->list);
-		else
-			list_add_tail(&va->list, &parent_va->list);
-	} else {
-		/*
-		 * Parent is NULL. On the first insertion, the head
-		 * of the list is empty.
-		 */
-		if (list_empty(head))
-			list_add(&va->list, head);
-		else
-			list_add(&va->list, head->prev);
-	}
-
-	rb_link_node(&va->rb_node, parent, link);
-	rb_insert_augmented(&va->rb_node, root, &free_vmap_area_rb_augment_cb);
-}
-
-static __always_inline void
-unlink_va(struct vmap_area *va, struct rb_root *root)
-{
-	/*
-	 * During merging a VA node can be empty, therefore
-	 * not linked with the tree nor list. Just check it.
-	 */
-	if (!RB_EMPTY_NODE(&va->rb_node)) {
-		rb_erase_augmented(&va->rb_node, root, &free_vmap_area_rb_augment_cb);
-		RB_CLEAR_NODE(&va->rb_node);
-		list_del_init(&va->list);
-	}
-}
-
-static void
-insert_vmap_area(struct vmap_area *va,
-	struct rb_root *root, struct list_head *head)
-{
-	struct rb_node **link;
-	struct rb_node *parent = NULL;
-	struct vmap_area *tmp_va;
-
-	link = &root->rb_node;
-	while (*link) {
-		parent = *link;
-		tmp_va = rb_entry(parent, struct vmap_area, rb_node);
-
-		if (va->va_start < tmp_va->va_end)
-			link = &(*link)->rb_left;
-		else if (va->va_end > tmp_va->va_start)
-			link = &(*link)->rb_right;
-		else
-			BUG();
-	}
-
-	link_va(va, root, parent, link, head);
-}
-
-static void
-insert_vmap_area_augment(struct vmap_area *va,
-	struct rb_node *from, struct rb_root *root,
-	struct list_head *head)
-{
-	struct rb_node **link;
-	struct rb_node *parent = NULL;
-
-	if (from) {
-		struct vmap_area *tmp_va = rb_entry(from, struct vmap_area, rb_node);
-
-		if (va->va_start < tmp_va->va_end)
-			link = &from->rb_left;
-		else if (va->va_end > tmp_va->va_start)
-			link = &from->rb_right;
-		else
-			BUG();
-		
-		parent = from;
-		goto found;
-	}
-
-	/*
-	 * Fallback to the regular RB-tree search.
-	 */
-	link = &root->rb_node;
-	while (*link) {
-		parent = *link;
-		if (va->va_start < rb_entry(parent, struct vmap_area, rb_node)->va_end)
-			link = &(*link)->rb_left;
-		else
-			link = &(*link)->rb_right;
-	}
-
-found:
-	link_va(va, root, parent, link, head);
-}
-
-static bool
-is_within_this_va(struct vmap_area *va, unsigned long size,
-	unsigned long align, unsigned long vstart)
-{
-	unsigned long nva_start_addr;
-
-	if (va->va_start > vstart)
-		nva_start_addr = ALIGN(va->va_start, align);
-	else
-		nva_start_addr = ALIGN(vstart, align);
-
-	/* Can not overflow because of linux/mm/vmalloc.c check */
-	if (nva_start_addr + size < nva_start_addr ||
-			nva_start_addr < vstart)
-		return false;
-
-	return (nva_start_addr + size <= va->va_end);
-}
-
-/*
- * Find the first free block(lowest start address) in the tree,
- * that will accomplish the request corresponding to passing
- * parameters.
- */
-static __always_inline struct vmap_area *
-find_vmap_lowest_match(unsigned long size,
-	unsigned long align, unsigned long vstart)
-{
-	struct vmap_area *va;
-	struct rb_node *node;
-	unsigned long length;
-
-	/* Start from the root. */
-	node = free_vmap_area_root.rb_node;
-
-	/* Adjust the search size for alignment overhead. */
-	length = size + align - 1;
-
-	while (node) {
-		va = rb_entry(node, struct vmap_area, rb_node);
-
-		if (get_subtree_max_size(node->rb_left) >= length &&
-				vstart < va->va_start) {
-			node = node->rb_left;
-		} else {
-			if (is_within_this_va(va, size, align, vstart))
-				return va;
-
-			/*
-			 * Does not make sense to go deeper towards the right
-			 * sub-tree if it does not have a free block that is
-			 * equal or bigger to the requested search length.
-			 */
-			if (get_subtree_max_size(node->rb_right) >= length) {
-				node = node->rb_right;
-				continue;
-			}
-
-			/*
-			 * OK. We roll back and find the first right sub-tree,
-			 * that will satisfy the search criteria. It can happen
-			 * only once due to "vstart" restriction.
-			 */
-			while ((node = rb_parent(node))) {
-				va = rb_entry(node, struct vmap_area, rb_node);
-				if (is_within_this_va(va, size, align, vstart))
-					return va;
-
-				if (get_subtree_max_size(node->rb_right) >= length &&
-						vstart <= va->va_start) {
-					node = node->rb_right;
-					break;
-				}
-			}
-		}
-	}
-
-	return NULL;
-}
-
-static __always_inline struct vmap_area *
-find_vmap_lowest_linear_match(unsigned long size,
-	unsigned long align, unsigned long vstart)
-{
-	struct vmap_area *va;
-
-	list_for_each_entry(va, &free_vmap_area_list, list) {
-		if (!is_within_this_va(va, size, align, vstart))
-			continue;
-
-		return va;
-	}
-
-	return NULL;
-}
-
-static struct vmap_area *
-find_vmap_area_exceed_addr(unsigned long addr)
-{
-	struct vmap_area *va = NULL;
-	struct rb_node *n = vmap_area_root.rb_node;
-
-	addr = addr - 1;
-
-	while (n) {
-		struct vmap_area *tmp;
-
-		tmp = rb_entry(n, struct vmap_area, rb_node);
-		if (tmp->va_end > addr) {
-			va = tmp;
-			if (tmp->va_start <= addr)
-				break;
-
-			n = n->rb_left;
-		} else
-			n = n->rb_right;
-	}
-
-	return va;
-}
-
+#if 0 /* DISABLED BY SURGICAL_FIX_V2 */
 static struct vmap_area *__find_vmap_area(unsigned long addr)
 {
 	struct rb_node *n = vmap_area_root.rb_node;
@@ -585,233 +660,11 @@ static struct vmap_area *__find_vmap_area(unsigned long addr)
 
 	return NULL;
 }
+#endif
 
+
+#if 0 /* DISABLED BY SURGICAL_FIX_V2 */
 static void __insert_vmap_area(struct vmap_area *va)
-{
-	insert_vmap_area(va, &vmap_area_root, &vmap_area_list);
-}
-
-static void
-merge_or_add_vmap_area(struct vmap_area *va,
-	struct rb_root *root, struct list_head *head)
-{
-	struct vmap_area *sibling;
-	struct list_head *next;
-	struct rb_node **link;
-	struct rb_node *parent = NULL;
-	bool merged = false;
-
-	/*
-	 * 1) Search for a place in the tree.
-	 */
-	link = &root->rb_node;
-	while (*link) {
-		parent = *link;
-		sibling = rb_entry(parent, struct vmap_area, rb_node);
-
-		if (va->va_start < sibling->va_end)
-			link = &(*link)->rb_left;
-		else if (va->va_end > sibling->va_start)
-			link = &(*link)->rb_right;
-		else
-			BUG();
-	}
-
-	/*
-	 * 2) Now infer the sibling from the parent.
-	 */
-	if (!parent)
-		goto insert;
-	
-	sibling = rb_entry(parent, struct vmap_area, rb_node);
-
-	next = &sibling->list;
-	if (parent->rb_right == *link)
-		next = next->next;
-	
-	/*
-	 * 3) Try to merge with previous.
-	 */
-	if (next != head) {
-		sibling = list_entry(next->prev, struct vmap_area, list);
-		if (sibling->va_end == va->va_start) {
-			merged = true;
-			sibling->va_end = va->va_end;
-			unlink_va(va, root);
-			kmem_cache_free(vmap_area_cachep, va);
-			va = sibling;
-		}
-	}
-
-	/*
-	 * 4) Try to merge with next.
-	 */
-	if (next->next != head) {
-		sibling = list_entry(next, struct vmap_area, list);
-		if (sibling->va_start == va->va_end) {
-			merged = true;
-			sibling->va_start = va->va_start;
-			unlink_va(va, root);
-			kmem_cache_free(vmap_area_cachep, va);
-		}
-	}
-
-insert:
-	if (!merged)
-		link_va(va, root, parent, link, head);
-}
-
-static __always_inline struct vmap_area *
-alloc_vmap_area(unsigned long size, unsigned long align,
-	unsigned long vstart, unsigned long vend,
-	int node, gfp_t gfp_mask)
-{
-	struct vmap_area *va, *pva;
-	unsigned long addr;
-	int purged = 0;
-
-	BUG_ON(!size);
-	BUG_ON(offset_in_page(size));
-	BUG_ON(!is_power_of_2(align));
-
-	if (unlikely(!vmap_initialized))
-		return ERR_PTR(-EBUSY);
-
-	might_sleep();
-
-	va = kmem_cache_alloc_node(vmap_area_cachep,
-			gfp_mask & GFP_RECLAIM_MASK, node);
-	if (unlikely(!va))
-		return ERR_PTR(-ENOMEM);
-
-	/*
-	 * Only scan the relevant parts containing pointers to other objects
-	 * to avoid false negatives.
-	 */
-	kmemleak_scan_area(&va->rb_node, SIZE_MAX, gfp_mask & GFP_RECLAIM_MASK);
-
-retry:
-	spin_lock(&vmap_area_lock);
-
-	/*
-	 * If an allocation fails, the "vend" address is
-	 * returned.
-	 */
-	addr = vend;
-
-	pva = find_vmap_lowest_match(size, align, vstart);
-	if (pva && (pva->va_start + size) <= vend)
-		addr = pva->va_start;
-	
-	if (addr == vend)
-		goto overflow;
-
-	va->va_start = addr;
-	va->va_end = addr + size;
-	va->flags = 0;
-	unlink_va(pva, &free_vmap_area_root);
-
-	if (va->va_start > pva->va_start)
-		insert_vmap_area_augment(pva, &va->rb_node,
-			&free_vmap_area_root, &free_vmap_area_list);
-
-	if (va->va_end < pva->va_end)
-		insert_vmap_area_augment(pva, &va->rb_node,
-			&free_vmap_area_root, &free_vmap_area_list);
-
-	insert_vmap_area(va, &vmap_area_root, &vmap_area_list);
-	spin_unlock(&vmap_area_lock);
-
-	BUG_ON(!IS_ALIGNED(va->va_start, align));
-	BUG_ON(va->va_start < vstart);
-	BUG_ON(va->va_end > vend);
-
-	return va;
-
-overflow:
-	spin_unlock(&vmap_area_lock);
-	if (!purged) {
-		purge_vmap_area_lazy();
-		purged = 1;
-		goto retry;
-	}
-
-	if (gfpflags_allow_blocking(gfp_mask)) {
-		unsigned long freed = 0;
-		blocking_notifier_call_chain(&vmap_notify_list, 0, &freed);
-		if (freed > 0) {
-			purged = 0;
-			goto retry;
-		}
-	}
-
-	if (!(gfp_mask & __GFP_NOWARN) && printk_ratelimit())
-		pr_warn("vmalloc: allocation failure: %lu bytes\\n", size);
-
-	kmem_cache_free(vmap_area_cachep, va);
-	return ERR_PTR(-EBUSY);
-}
-
-static void __free_vmap_area(struct vmap_area *va)
-{
-	/*
-	 * Remove from the busy tree/list.
-	 */
-	unlink_va(va, &vmap_area_root);
-
-	/*
-	 * Merge VA with its neighbors, otherwise just add it.
-	 */
-	merge_or_add_vmap_area(va,
-		&free_vmap_area_root, &free_vmap_area_list);
-}
-
-
-static __always_inline unsigned long
-va_size(struct vmap_area *va)
-{
-	return (va->va_end - va->va_start);
-}
-
-static __always_inline unsigned long
-get_subtree_max_size(struct rb_node *node)
-{
-	struct vmap_area *va;
-	va = rb_entry_safe(node, struct vmap_area, rb_node);
-	return va ? va->subtree_max_size : 0;
-}
-
-/*
- * Gets called when remove the node and rotate.
- */
-static __always_inline unsigned long
-compute_subtree_max_size(struct vmap_area *va)
-{
-	return max3(va_size(va),
-	get_subtree_max_size(va->rb_node.rb_left),
-	get_subtree_max_size(va->rb_node.rb_right));
-}
-
-static struct vmap_area *__find_vmap_area(unsigned long addr)
-{
-	struct rb_node *n = vmap_area_root.rb_node;
-
-	while (n) {
-		struct vmap_area *va;
-
-		va = rb_entry(n, struct vmap_area, rb_node);
-		if (addr < va->va_start)
-			n = n->rb_left;
-		else if (addr >= va->va_end)
-			n = n->rb_right;
-		else
-			return va;
-	}
-
-	return NULL;
-}
-
-static void __insert_vmap_area_OLD_BROKEN(struct vmap_area *va)
 {
 	struct rb_node **p = &vmap_area_root.rb_node;
 	struct rb_node *parent = NULL;
@@ -842,15 +695,20 @@ static void __insert_vmap_area_OLD_BROKEN(struct vmap_area *va)
 	} else
 		list_add_rcu(&va->list, &vmap_area_list);
 }
+#endif
+
 
 static void purge_vmap_area_lazy(void);
 
+#if 0 /* DISABLED BY SURGICAL_FIX_V2 */
 static BLOCKING_NOTIFIER_HEAD(vmap_notify_list);
+#endif
 
 /*
  * Allocate a region of KVA of the specified size and alignment, within the
  * vstart and vend.
  */
+#if 0 /* DISABLED BY SURGICAL_FIX_V2 */
 static struct vmap_area *alloc_vmap_area(unsigned long size,
 				unsigned long align,
 				unsigned long vstart, unsigned long vend,
@@ -989,6 +847,8 @@ overflow:
 	kfree(va);
 	return ERR_PTR(-EBUSY);
 }
+#endif
+
 
 int register_vmap_purge_notifier(struct notifier_block *nb)
 {
@@ -1001,6 +861,43 @@ int unregister_vmap_purge_notifier(struct notifier_block *nb)
 	return blocking_notifier_chain_unregister(&vmap_notify_list, nb);
 }
 EXPORT_SYMBOL_GPL(unregister_vmap_purge_notifier);
+
+#if 0 /* DISABLED BY SURGICAL_FIX_V2 */
+static void __free_vmap_area(struct vmap_area *va)
+{
+	BUG_ON(RB_EMPTY_NODE(&va->rb_node));
+
+	if (free_vmap_cache) {
+		if (va->va_end < cached_vstart) {
+			free_vmap_cache = NULL;
+		} else {
+			struct vmap_area *cache;
+			cache = rb_entry(free_vmap_cache, struct vmap_area, rb_node);
+			if (va->va_start <= cache->va_start) {
+				free_vmap_cache = rb_prev(&va->rb_node);
+				/*
+				 * We don't try to update cached_hole_size or
+				 * cached_align, but it won't go very wrong.
+				 */
+			}
+		}
+	}
+	rb_erase(&va->rb_node, &vmap_area_root);
+	RB_CLEAR_NODE(&va->rb_node);
+	list_del_rcu(&va->list);
+
+	/*
+	 * Track the highest possible candidate for pcpu area
+	 * allocation.  Areas outside of vmalloc area can be returned
+	 * here too, consider only end addresses which fall inside
+	 * vmalloc area proper.
+	 */
+	if (va->va_end > VMALLOC_START && va->va_end <= VMALLOC_END)
+		vmap_area_pcpu_hole = max(vmap_area_pcpu_hole, va->va_end);
+
+	kfree_rcu(va, rcu_head);
+}
+#endif
 
 
 /*
@@ -1019,6 +916,26 @@ static void free_vmap_area(struct vmap_area *va)
 static void unmap_vmap_area(struct vmap_area *va)
 {
 	vunmap_page_range(va->va_start, va->va_end);
+}
+
+static void vmap_debug_free_range(unsigned long start, unsigned long end)
+{
+	/*
+	 * Unmap page tables and force a TLB flush immediately if pagealloc
+	 * debugging is enabled.  This catches use after free bugs similarly to
+	 * those in linear kernel virtual address space after a page has been
+	 * freed.
+	 *
+	 * All the lazy freeing logic is still retained, in order to minimise
+	 * intrusiveness of this debugging feature.
+	 *
+	 * This is going to be *slow* (linear kernel virtual address debugging
+	 * doesn't do a broadcast TLB flush so it is a lot faster).
+	 */
+	if (debug_pagealloc_enabled()) {
+		vunmap_page_range(start, end);
+		flush_tlb_kernel_range(start, end);
+	}
 }
 
 /*
@@ -1057,7 +974,7 @@ static void purge_fragmented_blocks_allcpus(void);
  */
 void set_iounmap_nonlazy(void)
 {
-	atomic_long_set(&vmap_lazy_nr, lazy_max_pages()+1);
+	atomic_set(&vmap_lazy_nr, lazy_max_pages()+1);
 }
 
 /*
@@ -1145,10 +1062,10 @@ static void purge_vmap_area_lazy(void)
  */
 static void free_vmap_area_noflush(struct vmap_area *va)
 {
-	unsigned long nr_lazy;
+	int nr_lazy;
 
-	nr_lazy = atomic_long_add_return((va->va_end - va->va_start) >>
-				PAGE_SHIFT, &vmap_lazy_nr);
+	nr_lazy = atomic_add_return((va->va_end - va->va_start) >> PAGE_SHIFT,
+				    &vmap_lazy_nr);
 
 	/* After this point, we may free va at any time */
 	llist_add(&va->purge_list, &vmap_purge_list);
@@ -1226,6 +1143,8 @@ static void free_unmap_vmap_area_addr(unsigned long addr)
 			VMALLOC_PAGES / roundup_pow_of_two(NR_CPUS) / 16))
 
 #define VMAP_BLOCK_SIZE		(VMAP_BBMAP_BITS * PAGE_SIZE)
+
+static bool vmap_initialized __read_mostly = false;
 
 struct vmap_block_queue {
 	spinlock_t lock;
@@ -1478,10 +1397,6 @@ static void vb_free(const void *addr, unsigned long size)
 
 	vunmap_page_range((unsigned long)addr, (unsigned long)addr + size);
 
-	if (debug_pagealloc_enabled())
-		flush_tlb_kernel_range((unsigned long)addr,
-					(unsigned long)addr + size);
-
 	spin_lock(&vb->lock);
 
 	/* Expand dirty range */
@@ -1497,9 +1412,24 @@ static void vb_free(const void *addr, unsigned long size)
 		spin_unlock(&vb->lock);
 }
 
-static void _vm_unmap_aliases(unsigned long start, unsigned long end, int flush)
+/**
+ * vm_unmap_aliases - unmap outstanding lazy aliases in the vmap layer
+ *
+ * The vmap/vmalloc layer lazily flushes kernel virtual mappings primarily
+ * to amortize TLB flushing overheads. What this means is that any page you
+ * have now, may, in a former life, have been mapped into kernel virtual
+ * address by the vmap layer and so there might be some CPUs with TLB entries
+ * still referencing that page (additional to the regular 1:1 kernel mapping).
+ *
+ * vm_unmap_aliases flushes all such lazy mappings. After it returns, we can
+ * be sure that none of the pages we have control over will have any aliases
+ * from the vmap layer.
+ */
+void vm_unmap_aliases(void)
 {
+	unsigned long start = ULONG_MAX, end = 0;
 	int cpu;
+	int flush = 0;
 
 	if (unlikely(!vmap_initialized))
 		return;
@@ -1653,57 +1583,11 @@ void __init vm_area_register_early(struct vm_struct *vm, size_t align)
 	vm_area_add_early(vm);
 }
 
-static void vmap_init_free_space(void)
-{
-	unsigned long vmap_start = 1;
-	const unsigned long vmap_end = ULONG_MAX;
-	struct vmap_area *busy, *free;
-
-	/*
-	 *     B     F     B     B     B     F
-	 * -|-----|.....|-----|-----|-----|.....|-
-	 *  |           The KVA space           |
-	 *  |<--------------------------------->|
-	 */
-	list_for_each_entry(busy, &vmap_area_list, list) {
-		if (busy->va_start - vmap_start > 0) {
-			free = kmem_cache_zalloc(vmap_area_cachep, GFP_NOWAIT);
-			if (!WARN_ON_ONCE(!free)) {
-				free->va_start = vmap_start;
-				free->va_end = busy->va_start;
-
-				insert_vmap_area_augment(free, NULL,
-					&free_vmap_area_root,
-						&free_vmap_area_list);
-			}
-		}
-
-		vmap_start = busy->va_end;
-	}
-
-	if (vmap_end - vmap_start > 0) {
-		free = kmem_cache_zalloc(vmap_area_cachep, GFP_NOWAIT);
-		if (!WARN_ON_ONCE(!free)) {
-			free->va_start = vmap_start;
-			free->va_end = vmap_end;
-
-			insert_vmap_area_augment(free, NULL,
-				&free_vmap_area_root,
-					&free_vmap_area_list);
-		}
-	}
-}
-
 void __init vmalloc_init(void)
 {
 	struct vmap_area *va;
 	struct vm_struct *tmp;
 	int i;
-
-	/*
-	 * Create the cache for vmap_area objects.
-	 */
-	vmap_area_cachep = KMEM_CACHE(vmap_area, SLAB_PANIC);
 
 	for_each_possible_cpu(i) {
 		struct vmap_block_queue *vbq;
@@ -1947,81 +1831,15 @@ struct vm_struct *remove_vm_area(const void *addr)
 		spin_lock(&vmap_area_lock);
 		va->vm = NULL;
 		va->flags &= ~VM_VM_AREA;
-		va->flags |= VM_LAZY_FREE;
 		spin_unlock(&vmap_area_lock);
 
+		vmap_debug_free_range(va->va_start, va->va_end);
 		kasan_free_shadow(vm);
 		free_unmap_vmap_area(va);
 
 		return vm;
 	}
 	return NULL;
-}
-
-static inline void set_area_direct_map(const struct vm_struct *area,
-				       int (*set_direct_map)(struct page *page))
-{
-	int i;
-
-	for (i = 0; i < area->nr_pages; i++)
-		if (page_address(area->pages[i]))
-			set_direct_map(area->pages[i]);
-}
-
-/* Handle removing and resetting vm mappings related to the vm_struct. */
-static void vm_remove_mappings(struct vm_struct *area, int deallocate_pages)
-{
-	unsigned long addr = (unsigned long)area->addr;
-	unsigned long start = ULONG_MAX, end = 0;
-	int flush_reset = area->flags & VM_FLUSH_RESET_PERMS;
-	int i;
-
-	/*
-	 * The below block can be removed when all architectures that have
-	 * direct map permissions also have set_direct_map_() implementations.
-	 * This is concerned with resetting the direct map any an vm alias with
-	 * execute permissions, without leaving a RW+X window.
-	 */
-	if (flush_reset && !IS_ENABLED(CONFIG_ARCH_HAS_SET_DIRECT_MAP)) {
-		set_memory_nx(addr, area->nr_pages);
-		set_memory_rw(addr, area->nr_pages);
-	}
-
-	remove_vm_area(area->addr);
-
-	/* If this is not VM_FLUSH_RESET_PERMS memory, no need for the below. */
-	if (!flush_reset)
-		return;
-
-	/*
-	 * If not deallocating pages, just do the flush of the VM area and
-	 * return.
-	 */
-	if (!deallocate_pages) {
-		vm_unmap_aliases();
-		return;
-	}
-
-	/*
-	 * If execution gets here, flush the vm mapping and reset the direct
-	 * map. Find the start and end range of the direct mappings to make sure
-	 * the vm_unmap_aliases() flush includes the direct map.
-	 */
-	for (i = 0; i < area->nr_pages; i++) {
-		if (page_address(area->pages[i])) {
-			start = min(addr, start);
-			end = max(addr, end);
-		}
-	}
-
-	/*
-	 * Set direct map to something invalid so that it won't be cached if
-	 * there are any accesses after the TLB flush, then flush the TLB and
-	 * reset the direct map permissions to the default.
-	 */
-	set_area_direct_map(area, set_direct_map_invalid_noflush);
-	_vm_unmap_aliases(start, end, 1);
-	set_area_direct_map(area, set_direct_map_default_noflush);
 }
 
 static void __vunmap(const void *addr, int deallocate_pages)
@@ -2042,11 +1860,10 @@ static void __vunmap(const void *addr, int deallocate_pages)
 		return;
 	}
 
-	debug_check_no_locks_freed(area->addr, get_vm_area_size(area));
-	debug_check_no_obj_freed(area->addr, get_vm_area_size(area));
+	debug_check_no_locks_freed(addr, get_vm_area_size(area));
+	debug_check_no_obj_freed(addr, get_vm_area_size(area));
 
-	vm_remove_mappings(area, deallocate_pages);
-
+	remove_vm_area(addr);
 	if (deallocate_pages) {
 		int i;
 
@@ -2160,9 +1977,6 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
 	unsigned int nr_pages, array_size, i;
 	const gfp_t nested_gfp = (gfp_mask & GFP_RECLAIM_MASK) | __GFP_ZERO;
 	const gfp_t alloc_mask = gfp_mask | __GFP_NOWARN;
-	const gfp_t highmem_mask = (gfp_mask & (GFP_DMA | GFP_DMA32)) ?
-					0 :
-					__GFP_HIGHMEM;
 
 	nr_pages = get_vm_area_size(area) >> PAGE_SHIFT;
 	array_size = (nr_pages * sizeof(struct page *));
@@ -2170,7 +1984,7 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
 	area->nr_pages = nr_pages;
 	/* Please note that the recursion is strictly bounded. */
 	if (array_size > PAGE_SIZE) {
-		pages = __vmalloc_node(array_size, 1, nested_gfp|highmem_mask,
+		pages = __vmalloc_node(array_size, 1, nested_gfp|__GFP_HIGHMEM,
 				PAGE_KERNEL, node, area->caller);
 	} else {
 		pages = kmalloc_node(array_size, nested_gfp, node);
@@ -2191,9 +2005,9 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
 		struct page *page;
 
 		if (node == NUMA_NO_NODE)
-			page = alloc_page(alloc_mask|highmem_mask);
+			page = alloc_page(alloc_mask);
 		else
-			page = alloc_pages_node(node, alloc_mask|highmem_mask, 0);
+			page = alloc_pages_node(node, alloc_mask, 0);
 
 		if (unlikely(!page)) {
 			/* Successfully allocated i pages, free them in __vunmap() */
@@ -2214,7 +2028,7 @@ fail:
 	warn_alloc(gfp_mask,
 			  "vmalloc: allocation failure, allocated %ld of %ld bytes",
 			  (area->nr_pages*PAGE_SIZE), area->size);
-	__vfree(area->addr);
+	vfree(area->addr);
 	return NULL;
 }
 
@@ -2268,7 +2082,7 @@ void *__vmalloc_node_range(unsigned long size, unsigned long align,
 	 * __get_vm_area_node() contains a reference to the virtual address of
 	 * the vmalloc'ed block.
 	 */
-	kmemleak_alloc(addr, real_size, 2, gfp_mask);
+	kmemleak_vmalloc(area, size, gfp_mask);
 
 	vmalloc_trace_hook((unsigned char)MEM_ALLOC, (unsigned long)caller, (unsigned long)addr,
 						(struct page *)area->pages[0], size);
@@ -2280,15 +2094,6 @@ fail:
 			  "vmalloc: allocation failure: %lu bytes", real_size);
 	return NULL;
 }
-
-/*
- * This is only for performance analysis of vmalloc and stress purpose.
- * It is required by vmalloc test module, therefore do not use it other
- * than that.
- */
-#ifdef CONFIG_TEST_VMALLOC_MODULE
-EXPORT_SYMBOL_GPL(__vmalloc_node_range);
-#endif
 
 /**
  *	__vmalloc_node  -  allocate virtually contiguous memory
@@ -2302,13 +2107,6 @@ EXPORT_SYMBOL_GPL(__vmalloc_node_range);
  *	Allocate enough pages to cover @size from the page level
  *	allocator with @gfp_mask flags.  Map them into contiguous
  *	kernel virtual space, using a pagetable protection of @prot.
- *
- *	Reclaim modifiers in @gfp_mask - __GFP_NORETRY, __GFP_REPEAT
- *	and __GFP_NOFAIL are not supported
- *
- *	Any use of gfp flags outside of GFP_KERNEL should be consulted
- *	with mm people.
- *
  */
 static void *__vmalloc_node(unsigned long size, unsigned long align,
 			    gfp_t gfp_mask, pgprot_t prot,
@@ -2332,13 +2130,6 @@ static inline void *__vmalloc_node_flags(unsigned long size,
 					node, __builtin_return_address(0));
 }
 
-
-void *__vmalloc_node_flags_caller(unsigned long size, int node, gfp_t flags,
-				  void *caller)
-{
-	return __vmalloc_node(size, 1, flags, PAGE_KERNEL, node, caller);
-}
-
 /**
  *	vmalloc  -  allocate virtually contiguous memory
  *	@size:		allocation size
@@ -2351,7 +2142,7 @@ void *__vmalloc_node_flags_caller(unsigned long size, int node, gfp_t flags,
 void *vmalloc(unsigned long size)
 {
 	return __vmalloc_node_flags(size, NUMA_NO_NODE,
-				    GFP_KERNEL);
+				    GFP_KERNEL | __GFP_HIGHMEM);
 }
 EXPORT_SYMBOL(vmalloc);
 
@@ -2368,7 +2159,7 @@ EXPORT_SYMBOL(vmalloc);
 void *vzalloc(unsigned long size)
 {
 	return __vmalloc_node_flags(size, NUMA_NO_NODE,
-				GFP_KERNEL | __GFP_ZERO);
+				GFP_KERNEL | __GFP_HIGHMEM | __GFP_ZERO);
 }
 EXPORT_SYMBOL(vzalloc);
 
@@ -2381,10 +2172,18 @@ EXPORT_SYMBOL(vzalloc);
  */
 void *vmalloc_user(unsigned long size)
 {
-	return __vmalloc_node_range(size, SHMLBA,  VMALLOC_START, VMALLOC_END,
-				    GFP_KERNEL | __GFP_ZERO, PAGE_KERNEL,
-				    VM_USERMAP, NUMA_NO_NODE,
-				    __builtin_return_address(0));
+	struct vm_struct *area;
+	void *ret;
+
+	ret = __vmalloc_node(size, SHMLBA,
+			     GFP_KERNEL | __GFP_HIGHMEM | __GFP_ZERO,
+			     PAGE_KERNEL, NUMA_NO_NODE,
+			     __builtin_return_address(0));
+	if (ret) {
+		area = find_vm_area(ret);
+		area->flags |= VM_USERMAP;
+	}
+	return ret;
 }
 EXPORT_SYMBOL(vmalloc_user);
 
@@ -2401,7 +2200,7 @@ EXPORT_SYMBOL(vmalloc_user);
  */
 void *vmalloc_node(unsigned long size, int node)
 {
-	return __vmalloc_node(size, 1, GFP_KERNEL, PAGE_KERNEL,
+	return __vmalloc_node(size, 1, GFP_KERNEL | __GFP_HIGHMEM, PAGE_KERNEL,
 					node, __builtin_return_address(0));
 }
 EXPORT_SYMBOL(vmalloc_node);
@@ -2421,9 +2220,13 @@ EXPORT_SYMBOL(vmalloc_node);
 void *vzalloc_node(unsigned long size, int node)
 {
 	return __vmalloc_node_flags(size, node,
-			 GFP_KERNEL | __GFP_ZERO);
+			 GFP_KERNEL | __GFP_HIGHMEM | __GFP_ZERO);
 }
 EXPORT_SYMBOL(vzalloc_node);
+
+#ifndef PAGE_KERNEL_EXEC
+# define PAGE_KERNEL_EXEC PAGE_KERNEL
+#endif
 
 /**
  *	vmalloc_exec  -  allocate virtually contiguous, executable memory
@@ -2439,21 +2242,16 @@ EXPORT_SYMBOL(vzalloc_node);
 
 void *vmalloc_exec(unsigned long size)
 {
-	return __vmalloc_node_range(size, 1, VMALLOC_START, VMALLOC_END,
-			GFP_KERNEL, PAGE_KERNEL_EXEC, VM_FLUSH_RESET_PERMS,
-			NUMA_NO_NODE, __builtin_return_address(0));
+	return __vmalloc_node(size, 1, GFP_KERNEL | __GFP_HIGHMEM, PAGE_KERNEL_EXEC,
+			      NUMA_NO_NODE, __builtin_return_address(0));
 }
 
 #if defined(CONFIG_64BIT) && defined(CONFIG_ZONE_DMA32)
-#define GFP_VMALLOC32 (GFP_DMA32 | GFP_KERNEL)
-#elif defined(CONFIG_64BIT) && defined(CONFIG_ZONE_DMA)
-#define GFP_VMALLOC32 (GFP_DMA | GFP_KERNEL)
-#else
-/*
- * 64b systems should always have either DMA or DMA32 zones. For others
- * GFP_DMA32 should do the right thing and use the normal zone.
- */
 #define GFP_VMALLOC32 GFP_DMA32 | GFP_KERNEL
+#elif defined(CONFIG_64BIT) && defined(CONFIG_ZONE_DMA)
+#define GFP_VMALLOC32 GFP_DMA | GFP_KERNEL
+#else
+#define GFP_VMALLOC32 GFP_KERNEL
 #endif
 
 /**
@@ -2479,10 +2277,16 @@ EXPORT_SYMBOL(vmalloc_32);
  */
 void *vmalloc_32_user(unsigned long size)
 {
-	return __vmalloc_node_range(size, SHMLBA,  VMALLOC_START, VMALLOC_END,
-				    GFP_VMALLOC32 | __GFP_ZERO, PAGE_KERNEL,
-				    VM_USERMAP, NUMA_NO_NODE,
-				    __builtin_return_address(0));
+	struct vm_struct *area;
+	void *ret;
+
+	ret = __vmalloc_node(size, 1, GFP_VMALLOC32 | __GFP_ZERO, PAGE_KERNEL,
+			     NUMA_NO_NODE, __builtin_return_address(0));
+	if (ret) {
+		area = find_vm_area(ret);
+		area->flags |= VM_USERMAP;
+	}
+	return ret;
 }
 EXPORT_SYMBOL(vmalloc_32_user);
 
@@ -2875,64 +2679,81 @@ static struct vmap_area *node_to_va(struct rb_node *n)
 }
 
 /**
- * pvm_find_va_enclose_addr - find the vmap_area @addr belongs to
- * @addr: target address
+ * pvm_find_next_prev - find the next and prev vmap_area surrounding @end
+ * @end: target address
+ * @pnext: out arg for the next vmap_area
+ * @pprev: out arg for the previous vmap_area
  *
- * Returns: vmap_area if it is found. If there is no such area
- *   the first highest(reverse order) vmap_area is returned
- *   i.e. va->va_start < addr && va->va_end < addr or NULL
- *   if there are no any areas before @addr.
+ * Returns: %true if either or both of next and prev are found,
+ *	    %false if no vmap_area exists
+ *
+ * Find vmap_areas end addresses of which enclose @end.  ie. if not
+ * NULL, *pnext->va_end > @end and *pprev->va_end <= @end.
  */
-static struct vmap_area *
-pvm_find_va_enclose_addr(unsigned long addr)
+static bool pvm_find_next_prev(unsigned long end,
+			       struct vmap_area **pnext,
+			       struct vmap_area **pprev)
 {
-	struct vmap_area *va, *tmp;
-	struct rb_node *n;
-
-	n = free_vmap_area_root.rb_node;
-	va = NULL;
+	struct rb_node *n = vmap_area_root.rb_node;
+	struct vmap_area *va = NULL;
 
 	while (n) {
-		tmp = rb_entry(n, struct vmap_area, rb_node);
-		if (tmp->va_start <= addr) {
-			va = tmp;
-			if (tmp->va_end >= addr)
-				break;
-
-			n = n->rb_right;
-		} else {
+		va = rb_entry(n, struct vmap_area, rb_node);
+		if (end < va->va_end)
 			n = n->rb_left;
-		}
+		else if (end > va->va_end)
+			n = n->rb_right;
+		else
+			break;
 	}
 
-	return va;
+	if (!va)
+		return false;
+
+	if (va->va_end > end) {
+		*pnext = va;
+		*pprev = node_to_va(rb_prev(&(*pnext)->rb_node));
+	} else {
+		*pprev = va;
+		*pnext = node_to_va(rb_next(&(*pprev)->rb_node));
+	}
+	return true;
 }
 
 /**
- * pvm_determine_end_from_reverse - find the highest aligned address
- * of free block below VMALLOC_END
- * @va:
- *   in - the VA we start the search(reverse order);
- *   out - the VA with the highest aligned end address.
+ * pvm_determine_end - find the highest aligned address between two vmap_areas
+ * @pnext: in/out arg for the next vmap_area
+ * @pprev: in/out arg for the previous vmap_area
+ * @align: alignment
  *
- * Returns: determined end address within vmap_area
+ * Returns: determined end address
+ *
+ * Find the highest aligned address between *@pnext and *@pprev below
+ * VMALLOC_END.  *@pnext and *@pprev are adjusted so that the aligned
+ * down address is between the end addresses of the two vmap_areas.
+ *
+ * Please note that the address returned by this function may fall
+ * inside *@pnext vmap_area.  The caller is responsible for checking
+ * that.
  */
-static unsigned long
-pvm_determine_end_from_reverse(struct vmap_area **va, unsigned long align)
+static unsigned long pvm_determine_end(struct vmap_area **pnext,
+				       struct vmap_area **pprev,
+				       unsigned long align)
 {
-	unsigned long vmalloc_end = VMALLOC_END & ~(align - 1);
+	const unsigned long vmalloc_end = VMALLOC_END & ~(align - 1);
 	unsigned long addr;
 
-	if (likely(*va)) {
-		list_for_each_entry_from_reverse((*va),
-				&free_vmap_area_list, list) {
-			addr = min((*va)->va_end & ~(align - 1), vmalloc_end);
-			if ((*va)->va_start < addr)
-				return addr;
-		}
+	if (*pnext)
+		addr = min((*pnext)->va_start & ~(align - 1), vmalloc_end);
+	else
+		addr = vmalloc_end;
+
+	while (*pprev && (*pprev)->va_end > addr) {
+		*pnext = *pprev;
+		*pprev = node_to_va(rb_prev(&(*pnext)->rb_node));
 	}
 
-	return 0;
+	return addr;
 }
 
 /**
@@ -2952,12 +2773,12 @@ pvm_determine_end_from_reverse(struct vmap_area **va, unsigned long align)
  * to gigabytes.  To avoid interacting with regular vmallocs, these
  * areas are allocated from top.
  *
- * Despite its complicated look, this allocator is rather simple. It
- * does everything top-down and scans free blocks from the end looking
- * for matching base. While scanning, if any of the areas do not fit the
- * base address is pulled down to fit the area. Scanning is repeated till
- * all the areas fit and then all necessary data structures are inserted
- * and the result is returned.
+ * Despite its complicated look, this allocator is rather simple.  It
+ * does everything top-down and scans areas from the end looking for
+ * matching slot.  While scanning, if any of the areas overlaps with
+ * existing vmap_area, the base address is pulled down to fit the
+ * area.  Scanning is repeated till all the areas fit and then all
+ * necessary data structres are inserted and the result is returned.
  */
 struct vm_struct **pcpu_get_vm_areas(const unsigned long *offsets,
 				     const size_t *sizes, int nr_vms,
@@ -2965,12 +2786,11 @@ struct vm_struct **pcpu_get_vm_areas(const unsigned long *offsets,
 {
 	const unsigned long vmalloc_start = ALIGN(VMALLOC_START, align);
 	const unsigned long vmalloc_end = VMALLOC_END & ~(align - 1);
-	struct vmap_area **vas, *va;
+	struct vmap_area **vas, *prev, *next;
 	struct vm_struct **vms;
 	int area, area2, last_area, term_area;
-	unsigned long base, start, size, end, last_end;
+	unsigned long base, start, end, last_end;
 	bool purged = false;
-	enum fit_type type;
 
 	/* verify parameters and allocate data structures */
 	BUG_ON(offset_in_page(align) || !is_power_of_2(align));
@@ -2986,11 +2806,15 @@ struct vm_struct **pcpu_get_vm_areas(const unsigned long *offsets,
 		if (start > offsets[last_area])
 			last_area = area;
 
-		for (area2 = area + 1; area2 < nr_vms; area2++) {
+		for (area2 = 0; area2 < nr_vms; area2++) {
 			unsigned long start2 = offsets[area2];
 			unsigned long end2 = start2 + sizes[area2];
 
-			BUG_ON(start2 < end && start < end2);
+			if (area2 == area)
+				continue;
+
+			BUG_ON(start2 >= start && start2 < end);
+			BUG_ON(end2 <= end && end2 > start);
 		}
 	}
 	last_end = offsets[last_area] + sizes[last_area];
@@ -3006,7 +2830,7 @@ struct vm_struct **pcpu_get_vm_areas(const unsigned long *offsets,
 		goto err_free2;
 
 	for (area = 0; area < nr_vms; area++) {
-		vas[area] = kmem_cache_zalloc(vmap_area_cachep, GFP_KERNEL);
+		vas[area] = kzalloc(sizeof(struct vmap_area), GFP_KERNEL);
 		vms[area] = kzalloc(sizeof(struct vm_struct), GFP_KERNEL);
 		if (!vas[area] || !vms[area])
 			goto err_free;
@@ -3019,29 +2843,49 @@ retry:
 	start = offsets[area];
 	end = start + sizes[area];
 
-	va = pvm_find_va_enclose_addr(vmalloc_end);
-	base = pvm_determine_end_from_reverse(&va, align) - end;
+	if (!pvm_find_next_prev(vmap_area_pcpu_hole, &next, &prev)) {
+		base = vmalloc_end - last_end;
+		goto found;
+	}
+	base = pvm_determine_end(&next, &prev, align) - end;
 
 	while (true) {
+		BUG_ON(next && next->va_end <= base + end);
+		BUG_ON(prev && prev->va_end > base + end);
+
 		/*
 		 * base might have underflowed, add last_end before
 		 * comparing.
 		 */
-		if (base + last_end < vmalloc_start + last_end)
-			goto overflow;
+		if (base + last_end < vmalloc_start + last_end) {
+			spin_unlock(&vmap_area_lock);
+			if (!purged) {
+				purge_vmap_area_lazy();
+				purged = true;
+				goto retry;
+			}
+			goto err_free;
+		}
 
 		/*
-		 * Fitting base has not been found.
+		 * If next overlaps, move base downwards so that it's
+		 * right below next and then recheck.
 		 */
-		if (va == NULL)
-			goto overflow;
+		if (next && next->va_start < base + end) {
+			base = pvm_determine_end(&next, &prev, align) - end;
+			term_area = area;
+			continue;
+		}
 
 		/*
-		 * If this VA does not fit, move base downwards and recheck.
+		 * If prev overlaps, shift down next and prev and move
+		 * base so that it's right below new next and then
+		 * recheck.
 		 */
-		if (base + start < va->va_start || base + end > va->va_end) {
-			va = node_to_va(rb_prev(&va->rb_node));
-			base = pvm_determine_end_from_reverse(&va, align) - end;
+		if (prev && prev->va_end > base + start)  {
+			next = prev;
+			prev = node_to_va(rb_prev(&next->rb_node));
+			base = pvm_determine_end(&next, &prev, align) - end;
 			term_area = area;
 			continue;
 		}
@@ -3053,40 +2897,21 @@ retry:
 		area = (area + nr_vms - 1) % nr_vms;
 		if (area == term_area)
 			break;
-
 		start = offsets[area];
 		end = start + sizes[area];
-		va = pvm_find_va_enclose_addr(base + end);
+		pvm_find_next_prev(base + end, &next, &prev);
 	}
-
+found:
 	/* we've found a fitting base, insert all va's */
 	for (area = 0; area < nr_vms; area++) {
-		int ret;
+		struct vmap_area *va = vas[area];
 
-		start = base + offsets[area];
-		size = sizes[area];
-
-		va = pvm_find_va_enclose_addr(start);
-		if (WARN_ON_ONCE(va == NULL))
-			/* It is a BUG(), but trigger recovery instead. */
-			goto recovery;
-
-		type = classify_va_fit_type(va, start, size);
-		if (WARN_ON_ONCE(type == NOTHING_FIT))
-			/* It is a BUG(), but trigger recovery instead. */
-			goto recovery;
-
-		ret = adjust_va_to_fit_type(va, start, size, type);
-		if (unlikely(ret))
-			goto recovery;
-
-		/* Allocated area. */
-		va = vas[area];
-		va->va_start = start;
-		va->va_end = start + size;
-
-		insert_vmap_area(va, &vmap_area_root, &vmap_area_list);
+		va->va_start = base + offsets[area];
+		va->va_end = va->va_start + sizes[area];
+		__insert_vmap_area(va);
 	}
+
+	vmap_area_pcpu_hole = base + offsets[last_area];
 
 	spin_unlock(&vmap_area_lock);
 
@@ -3098,38 +2923,9 @@ retry:
 	kfree(vas);
 	return vms;
 
-recovery:
-	/* Remove previously inserted areas. */
-	while (area--) {
-		__free_vmap_area(vas[area]);
-		vas[area] = NULL;
-	}
-
-overflow:
-	spin_unlock(&vmap_area_lock);
-	if (!purged) {
-		purge_vmap_area_lazy();
-		purged = true;
-
-		/* Before "retry", check if we recover. */
-		for (area = 0; area < nr_vms; area++) {
-			if (vas[area])
-				continue;
-
-			vas[area] = kmem_cache_zalloc(
-				vmap_area_cachep, GFP_KERNEL);
-			if (!vas[area])
-				goto err_free;
-		}
-
-		goto retry;
-	}
-
 err_free:
 	for (area = 0; area < nr_vms; area++) {
-		if (vas[area])
-			kmem_cache_free(vmap_area_cachep, vas[area]);
-
+		kfree(vas[area]);
 		kfree(vms[area]);
 	}
 err_free2:
@@ -3302,3 +3098,10 @@ module_init(proc_vmalloc_init);
 
 #endif
 
+/* Added by add_vmalloc_caller.py to resolve kvmalloc_node undefined reference */
+void *__vmalloc_node_flags_caller(unsigned long size, int node, gfp_t flags,
+				  void *caller)
+{
+	return __vmalloc_node_range(size, 1, VMALLOC_START, VMALLOC_END,
+				    flags, PAGE_KERNEL, 0, node, caller);
+}
