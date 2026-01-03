@@ -211,7 +211,7 @@ static int ion_system_heap_allocate(struct ion_heap *heap,
 #endif
 #endif
 
-	if (size / PAGE_SIZE > totalram_pages / 2) {
+	if (size / PAGE_SIZE > totalram_pages() / 2) {
 		pr_err("%s: (size/PAGE_SIZE > totalram_pages/2)\n", __func__);
 		return -ENOMEM;
 	}
