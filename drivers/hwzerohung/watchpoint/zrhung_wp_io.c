@@ -247,7 +247,7 @@ int get_fg_pid(void);
 *  @brief
 *  io watchponit init ZeroHung workqueque in blk-core
 ** ==========================================================================*/
-void iowp_workqueue_init(void) {
+__maybe_unused void iowp_workqueue_init(void) {
 	io_wp_work.workq = create_workqueue("io_latency_workq");
 	if (NULL == io_wp_work.workq) {
 		IOWP_WARN("%s: create workq failed!\n", __func__);
@@ -262,7 +262,7 @@ void iowp_workqueue_init(void) {
 *  @brief
 *  io watchponit report IO latency timeout to ZeroHung
 ** ==========================================================================*/
-void iowp_report(pid_t pid , pid_t tgid, char* name) {
+__maybe_unused void iowp_report(pid_t pid , pid_t tgid, char* name) {
 	unsigned int pos = 0;
 	iowp_event_t* cur_event = NULL;
 

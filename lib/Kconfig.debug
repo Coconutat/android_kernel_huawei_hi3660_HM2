@@ -851,13 +851,6 @@ config DETECT_HUNG_TASK
 	  enabled then all held locks will also be reported. This
 	  feature has negligible overhead.
 
-config DETECT_HUAWEI_HUNG_TASK
-        bool "Detect Huawei Hung Tasks"
-        depends on DETECT_HUNG_TASK
-        default n
-        help
-          Say Y here to enable huawei hung tasks detect.
-
 config DEFAULT_HUNG_TASK_TIMEOUT
 	int "Default timeout for hung task detection (in seconds)"
 	depends on DETECT_HUNG_TASK
