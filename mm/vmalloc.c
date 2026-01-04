@@ -2746,3 +2746,28 @@ module_init(proc_vmalloc_init);
 
 #endif
 
+
+
+/* * Added by fix_iowp_symbols.py 
+ * 解决 hisi-blk-latency.o 导致的 undefined reference 错误
+ * 由于禁用了 CONFIG_DETECT_HUAWEI_HUNG_TASK，这些依赖函数消失了
+ * 这里提供空实现以满足链接要求。
+ */
+#include <linux/module.h>
+
+/* 1. 补全 iowp_report */
+void iowp_report(int p1, int p2, void *p3)
+{
+    /* Do nothing */
+    return;
+}
+EXPORT_SYMBOL(iowp_report);
+
+/* 2. 补全 iowp_workqueue_init */
+int iowp_workqueue_init(void)
+{
+    /* Return 0 to indicate success */
+    return 0;
+}
+EXPORT_SYMBOL(iowp_workqueue_init);
+
