@@ -55,12 +55,15 @@
 
 #include <asm/text-patching.h>
 #include <asm/cacheflush.h>
+#include <linux/set_memory.h>
 #include <asm/desc.h>
 #include <asm/pgtable.h>
 #include <asm/uaccess.h>
 #include <asm/alternative.h>
 #include <asm/insn.h>
 #include <asm/debugreg.h>
+#include <asm/sections.h>
+#include <asm/set_memory.h>
 
 #include "common.h"
 

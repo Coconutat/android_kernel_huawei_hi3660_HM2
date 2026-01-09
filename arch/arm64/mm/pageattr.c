@@ -139,6 +139,11 @@ int set_memory_valid(unsigned long addr, int numpages, int enable)
 }
 
 #ifdef CONFIG_DEBUG_PAGEALLOC
+ void __kernel_map_pages(struct page *page, int numpages, int enable)
+ {
+ 	set_memory_valid((unsigned long)page_address(page), numpages, enable);
+ }
+/*
 void __kernel_map_pages(struct page *page, int numpages, int enable)
 {
 	unsigned long addr = (unsigned long) page_address(page);
@@ -152,6 +157,7 @@ void __kernel_map_pages(struct page *page, int numpages, int enable)
 					__pgprot(0),
 					__pgprot(PTE_VALID));
 }
+*/
 #ifdef CONFIG_HIBERNATION
 /*
  * When built with CONFIG_DEBUG_PAGEALLOC and CONFIG_HIBERNATION, this function
