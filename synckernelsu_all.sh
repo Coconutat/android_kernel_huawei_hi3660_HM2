@@ -1,8 +1,8 @@
 #!/bin/bash
 
-if [ -d KernelSU ]; then
+if [ -d KernelSU-Next ]; then
     echo "Found KernelSU Folder, removing it..."
-    rm -rf KernelSU
+    rm -rf KernelSU-Next
 	rm -rf drivers/kernelsu
 else
     echo "KernelSU Folder not found, proceeding..."
