@@ -8,7 +8,7 @@ else
     echo "KernelSU Folder not found, proceeding..."
 fi
 
-read -p "Please enter the version number (A/a is tags version.B/b is main version.C/c is special v0.9.2 Version For Huawei.D/d is SukiSU builtin.E/e s SukiSU tmp-builtin.F/f is rsuntk's KernelSU main version): " version
+read -p "Please enter the version number (A/a is KSU-Next Latest release.B/b is KSU-Next Stable branch.C/c is Legacy branch.: " version
 
 if [ "$version" == "" ]; then
     echo "No version specified. Exiting."
@@ -17,23 +17,13 @@ fi
 
 case $version in
     [Aa]*)
-        read -p "Please enter the version number you want to install: " specified_version
-        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v"$specified_version"
+        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
         ;;
     [Bb]*)
-        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s stable
         ;;
     [Cc]*)
-        curl -LSs https://raw.githubusercontent.com/Coconutat/KernelSU_backup/0.9.2_upstream_backup/kernel/setup.sh | bash -s 0.9.2_upstream_backup
-        ;;
-    [Dd]*)
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
-        ;;
-    [Ee]*)
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s tmp-builtin
-        ;;
-    [Ff]*)
-        curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s main
+        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
         ;;
     *)
         echo "Invalid option. Exiting."
