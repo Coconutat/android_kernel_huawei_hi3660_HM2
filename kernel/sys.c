@@ -1188,47 +1188,18 @@ static int override_release(char __user *release, size_t len)
 
 SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 {
-    struct new_utsname tmp;
+	int errno = 0;
 
-    down_read(&uts_sem);
-    memcpy(&tmp, utsname(), sizeof(tmp));
-    up_read(&uts_sem);
+	down_read(&uts_sem);
+	if (copy_to_user(name, utsname(), sizeof *name))
+		errno = -EFAULT;
+	up_read(&uts_sem);
 
-    // ---------------------------------------------------------
-    // 第一步：先按标准流程，把真实数据给用户
-    // ---------------------------------------------------------
-    if (copy_to_user(name, &tmp, sizeof(tmp)))
-        return -EFAULT;
-
-    // ---------------------------------------------------------
-    // 第二步：让系统执行原有的 override 逻辑
-    // (这通常用于处理 32位兼容性等，我们允许它先执行，防止破坏旧APP兼容性)
-    // ---------------------------------------------------------
-    if (override_release(name->release, sizeof(name->release)))
-        return -EFAULT;
-    if (override_architecture(name))
-        return -EFAULT;
-
-    // ---------------------------------------------------------
-    // 第三步：【关键欺骗】SUSFS 介入
-    // 此时用户空间已经是经过 override 处理的数据了。
-    // 我们把它读回来，再叠加上 SUSFS 的欺骗，拥有最高优先级。
-    // ---------------------------------------------------------
-#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
-    // 1. 从用户空间读回刚才被 override 修改过的数据到 tmp
-    if (copy_from_user(&tmp, name, sizeof(tmp)))
-        return -EFAULT;
-
-    // 2. 执行 SUSFS 欺骗 (此时 tmp 包含了 系统兼容性修正 + 原始数据)
-    // SUSFS 的修改将覆盖一切
-    susfs_spoof_uname(&tmp);
-
-    // 3. 将最终的欺骗结果强行覆盖回用户空间
-    if (copy_to_user(name, &tmp, sizeof(tmp)))
-        return -EFAULT;
-#endif
-
-    return 0;
+	if (!errno && override_release(name->release, sizeof(name->release)))
+		errno = -EFAULT;
+	if (!errno && override_architecture(name))
+		errno = -EFAULT;
+	return errno;
 }
 
 #ifdef __ARCH_WANT_SYS_OLD_UNAME
