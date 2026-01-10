@@ -40,11 +40,6 @@ seconds=$((duration % 60))
 # 打印运行时间
 echo "脚本运行时间为：${hours}小时 ${minutes}分钟 ${seconds}秒"
 
-# 定义 mkbootimg 的通用参数 (方便后续调用)
-BOOT_ARGS="--base 0x0 --cmdline "loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=enforcing buildvariant=user" --tags_offset 0x07A00000 --kernel_offset 0x00080000 --ramdisk_offset 0x07c00000 --header_version 1 --os_version 9 --os_patch_level 2020-10-01"
-BOOT_ARGS2="--base 0x0 --cmdline "loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=permissive buildvariant=user" --tags_offset 0x07A00000 --kernel_offset 0x00080000 --ramdisk_offset 0x07c00000 --header_version 1 --os_version 9 --os_patch_level 2020-10-01"
-
-
 if [ -f out/arch/arm64/boot/Image.gz ]; then
 
     echo "***Sucessfully built kernel...***"
@@ -52,6 +47,10 @@ if [ -f out/arch/arm64/boot/Image.gz ]; then
     # 创建输出目录
     mkdir -p Build_Kernel/Original
     mkdir -p Build_Kernel/KPM
+
+	# 定义 mkbootimg 的通用参数 (方便后续调用)
+	BOOT_ARGS="--base 0x0 --cmdline "loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=enforcing buildvariant=user" --tags_offset 0x07A00000 --kernel_offset 0x00080000 --ramdisk_offset 0x07c00000 --header_version 1 --os_version 9 --os_patch_level 2020-10-01"
+	BOOT_ARGS2="--base 0x0 --cmdline "loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=permissive buildvariant=user" --tags_offset 0x07A00000 --kernel_offset 0x00080000 --ramdisk_offset 0x07c00000 --header_version 1 --os_version 9 --os_patch_level 2020-10-01"
 
     # =========================================================
     # PART 1: 处理原始未修补内核 (Original)
