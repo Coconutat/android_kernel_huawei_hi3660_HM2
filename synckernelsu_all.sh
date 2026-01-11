@@ -1,42 +1,77 @@
 #!/bin/bash
 
-if [ -d KernelSU ]; then
+# 0. 检查必要的依赖
+if ! command -v curl &> /dev/null; then
+    echo "Error: curl is not installed. Please install it first."
+    exit 1
+fi
+
+# 1. 简单的环境检查 (可选，确保在内核源码根目录)
+if [ ! -f "Makefile" ]; then
+    echo "Warning: No Makefile found. Are you in the kernel source root directory?"
+    read -p "Press Enter to continue anyway, or Ctrl+C to abort..."
+fi
+
+# 2. 清理旧文件
+if [ -d "KernelSU" ]; then
     echo "Found KernelSU Folder, removing it..."
     rm -rf KernelSU
-	rm -rf drivers/kernelsu
+    # 同时也清理驱动目录下的软链接或文件夹，防止冲突
+    rm -rf drivers/kernelsu
 else
     echo "KernelSU Folder not found, proceeding..."
 fi
 
-read -p "Please enter the version number (A/a is tags version.B/b is main version.C/c is special v0.9.2 Version For Huawei.D/d is SukiSU builtin.E/e s SukiSU tmp-builtin.F/f is rsuntk's KernelSU main version): " version
+# 3. 获取用户输入
+echo "-------------------------------------------------------"
+echo "Please select the KernelSU version to install:"
+echo " A) Tags version (rsuntk)"
+echo " B) SukiSU Builtin (SukiSU-Ultra)"
+echo " C) Main version (rsuntk)"
+echo " D) Master version (backslashxx)"
+echo "-------------------------------------------------------"
+read -p "Enter your choice (A/B/C/D): " version
 
-if [ "$version" == "" ]; then
+if [ -z "$version" ]; then
     echo "No version specified. Exiting."
     exit 1
 fi
 
+# 定义通用的 curl 选项: 
+# -f (fail silently on HTTP errors)
+# -L (follow redirects)
+# -S (show error)
+# -s (silent mode)
+CURL_OPTS="-fLSs"
+
+# 4. 执行下载与安装
 case $version in
     [Aa]*)
-        read -p "Please enter the version number you want to install: " specified_version
-        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v"$specified_version"
+        echo "Installing rsuntk KernelSU (Tags)..."
+        curl $CURL_OPTS "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s tags
         ;;
     [Bb]*)
-        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+        echo "Installing SukiSU-Ultra (Builtin)..."
+        curl $CURL_OPTS "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
         ;;
     [Cc]*)
-        curl -LSs https://raw.githubusercontent.com/Coconutat/KernelSU_backup/0.9.2_upstream_backup/kernel/setup.sh | bash -s 0.9.2_upstream_backup
+        echo "Installing rsuntk KernelSU (Main)..."
+        curl $CURL_OPTS "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s main
         ;;
     [Dd]*)
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
-        ;;
-    [Ee]*)
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s tmp-builtin
-        ;;
-    [Ff]*)
-        curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s main
+        echo "Installing backslashxx KernelSU (Master)..."
+        curl $CURL_OPTS "https://raw.githubusercontent.com/backslashxx/KernelSU/master/kernel/setup.sh" | bash -s master
         ;;
     *)
-        echo "Invalid option. Exiting."
+        echo "Invalid option: $version. Exiting."
         exit 1
         ;;
 esac
+
+# 检查上一步管道命令的退出状态 (检查 bash -s 的执行结果)
+if [ $? -eq 0 ]; then
+    echo "Setup script finished successfully."
+else
+    echo "Error: Setup script failed or network issue occurred."
+    exit 1
+fi
