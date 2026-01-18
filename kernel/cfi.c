@@ -12,7 +12,6 @@
 #include <linux/spinlock.h>
 #include <asm/bug.h>
 #include <asm/cacheflush.h>
-#include <linux/set_memory.h>
 #include <asm/memory.h>
 
 /* Compiler-defined handler names */
