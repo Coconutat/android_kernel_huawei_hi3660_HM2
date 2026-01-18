@@ -68,7 +68,7 @@
 #include "load_image.h"
 #include "modem_dtb.h"
 
-/* DallsÖ®ï¿½ï¿½ï¿½Ö»ï¿½ï¿½ï¿½MBBï¿½ÚºÏ´ï¿½ï¿½ï¿½ */
+/* DallsÖ®ºóÊÖ»úºÍMBBÈÚºÏ´úÂë */
 
 #define SECBOOT_BUFLEN  (0x100000)      /*1MB*/
 
@@ -78,7 +78,7 @@
 
 char* modem_fw_dir = MODEM_IMAGE_PATH;
 
-/* ï¿½ï¿½ï¿½ï¿½È«OSï¿½ï¿½Òªï¿½ï¿½È«ï¿½ï¿½ï¿½Ø£ï¿½Ô¤ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ú´æ£¬ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ÏµÍ³ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ï¿½ï¿½Ðºó£¬µï¿½ï¿½ï¿½ï¿½ï¿½Î»Ê±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ë²»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ú´ï¿½ */
+/* ´ø°²È«OSÐèÒª°²È«¼ÓÔØ£¬Ô¤ÁôÁ¬ÐøÄÚ´æ£¬·ñÔòÔÚÏµÍ³³¤Ê±¼äÔËÐÐºó£¬µ¥¶À¸´Î»Ê±¿ÉÄÜÉêÇë²»µ½Á¬ÐøÄÚ´æ */
 static  u8 SECBOOT_BUFFER[SECBOOT_BUFLEN];
 
 struct image_type_name
@@ -92,12 +92,12 @@ struct image_type_name
 struct image_type_name modem_images[] =
 {
     {MODEM, DDR_MCORE_ADDR,         DDR_MCORE_SIZE,         "balong_modem.bin"},
-    {HIFI,  DDR_HIFI_ADDR,          DDR_HIFI_SIZE,          "hifi.img"},/* Ô¤ï¿½ï¿½ */
+    {HIFI,  DDR_HIFI_ADDR,          DDR_HIFI_SIZE,          "hifi.img"},/* Ô¤Áô */
     {DSP,   DDR_TLPHY_IMAGE_ADDR,   DDR_TLPHY_IMAGE_SIZE,   "lphy.bin"},
     {XDSP,  DDR_CBBE_IMAGE_ADDR,    DDR_CBBE_IMAGE_SIZE,    "xphy_mcore.bin"},
     {TAS,   0,                      0,                      "tas.bin"},
     {WAS,   0,                      0,                      "was.bin"},
-    {CAS,   0,                      0,                      "cas.bin"}, /* Ô¤ï¿½ï¿½ */
+    {CAS,   0,                      0,                      "cas.bin"}, /* Ô¤Áô */
     {MODEM_DTB, DDR_MCORE_DTS_ADDR, DDR_MCORE_DTS_SIZE,     "modem_dt.img"},
     {SOC_MAX,       0,              0,                      ""},
 };
@@ -147,7 +147,7 @@ static int get_image(struct image_type_name** image, enum SVC_SECBOOT_IMG_TYPE e
         sec_print_err("can not find image of type id %d\n", etype);
         return -ENOENT;
     }
-    /*ï¿½ï¿½ï¿½ï¿½ï¿½tas wasï¿½ï¿½ï¿½ï¿½Ä»ï¿½Òª*/
+    /*Èç¹ûÊÇtas was¾µÏñµÄ»°Òª*/
     if(!img->run_addr)
     {
         img->run_addr = run_addr ;
@@ -175,7 +175,7 @@ static int get_file_size(const char *filename)
 
 static int get_file_name(char *file_name, const struct image_type_name *image, bool *is_sec)
 {
-    /* ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½sec_ï¿½ï¿½Í·ï¿½Ä°ï¿½È«ï¿½ï¿½ï¿½ï¿½ */
+    /* ³¢ÊÔÒÔsec_¿ªÍ·µÄ°²È«¾µÏñ */
     *is_sec = true;
     file_name[0] = '\0';
     strncat(file_name, modem_fw_dir, strlen(modem_fw_dir));
@@ -186,7 +186,7 @@ static int get_file_name(char *file_name, const struct image_type_name *image, b
     {
         sec_print_info("file %s can't access, try unsec image\n", file_name);
 
-        /* ï¿½ï¿½ï¿½ï¿½ï¿½Ô·Ç°ï¿½È«ï¿½ï¿½ï¿½ï¿½ */
+        /* ³¢ÊÔÒÔ·Ç°²È«¾µÏñ */
         *is_sec = false;
         file_name[0] = '\0';
         strncat(file_name, modem_fw_dir, strlen(modem_fw_dir));
@@ -213,7 +213,7 @@ static int read_file(const char *file_name, unsigned int offset,
         sec_print_err("filp_open(%s) failed, ret:%d", file_name, retval);
         return retval;
     }
-    retval = kernel_read(fp, buffer, (unsigned long)length, (loff_t[]){offset});
+    retval = kernel_read(fp, (loff_t)offset, buffer, (unsigned long)length);
 
     if (retval != (int)length) {
         sec_print_err("kernel_read(%s) failed, retval %d, require len %u\n",
@@ -434,10 +434,10 @@ static int trans_data_to_os(enum SVC_SECBOOT_IMG_TYPE  image,
 
     operation.params[0].value.a = image;
     operation.params[0].value.b = (u32)(paddr & 0xFFFFFFFF);;
-    operation.params[1].value.a = (u32)((u64)paddr >> 32);/* ï¿½Ö»ï¿½ï¿½ï¿½MBB ï¿½ï¿½ï¿½ï¿½ */
+    operation.params[1].value.a = (u32)((u64)paddr >> 32);/* ÊÖ»úºÍMBB ¼æÈÝ */
     operation.params[1].value.b = offset;
-    operation.params[2].value.a = (u32)virt_to_phys(buf);/* ï¿½Ö»ï¿½ï¿½ï¿½MBB ï¿½ï¿½ï¿½ï¿½ */
-    operation.params[2].value.b = (u64)virt_to_phys(buf) >> 32;/* ï¿½Ö»ï¿½ï¿½ï¿½MBB ï¿½ï¿½ï¿½ï¿½ */
+    operation.params[2].value.a = (u32)virt_to_phys(buf);/* ÊÖ»úºÍMBB ¼æÈÝ */
+    operation.params[2].value.b = (u64)virt_to_phys(buf) >> 32;/* ÊÖ»úºÍMBB ¼æÈÝ */
     operation.params[3].value.a = size;
     result = TEEK_InvokeCommand(
                 session,
@@ -485,7 +485,7 @@ static int verify_soc_image(enum SVC_SECBOOT_IMG_TYPE  image,
      operation.params[0].value.a = image;
      operation.params[0].value.b = 0;/*SECBOOT_LOCKSTATE , not used currently*/
      operation.params[1].value.a = (u32)(paddr & 0xFFFFFFFF);
-     operation.params[1].value.b = (u32)((u64)paddr >> 32);/* ï¿½Ö»ï¿½ï¿½ï¿½MBB ï¿½ï¿½ï¿½ï¿½ */
+     operation.params[1].value.b = (u32)((u64)paddr >> 32);/* ÊÖ»úºÍMBB ¼æÈÝ */
      result = TEEK_InvokeCommand(session,
                                    SECBOOT_CMD_ID_VERIFY_DATA_TYPE,
                                     &operation,
@@ -499,14 +499,14 @@ static int verify_soc_image(enum SVC_SECBOOT_IMG_TYPE  image,
 
 /******************************************************************************
 Function:       load_data_to_secos
-Description:    ï¿½ï¿½Ö¸ï¿½ï¿½Æ«ï¿½Æ¿ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½Ö¸ï¿½ï¿½ï¿½ï¿½Ð¡ï¿½Ä¾ï¿½ï¿½ï¿½
+Description:    ´ÓÖ¸¶¨Æ«ÒÆ¿ªÊ¼´«ËÍÖ¸¶¨´óÐ¡µÄ¾µÏñ
 Input:
-            part_name   - Òªï¿½ï¿½ï¿½Í¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
-            offset    - Æ«ï¿½Æµï¿½Ö·
-            sizeToRead  - ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ÒªÐ´ï¿½ï¿½Ä¾ï¿½ï¿½ï¿½ï¿½bytesï¿½ï¿½Ð¡
+            part_name   - Òª·¢ËÍ¾µÏñµÄÃû³Æ
+            offset    - Æ«ÒÆµØÖ·
+            sizeToRead  - ÊäÈë²ÎÊý£¬ÒªÐ´ÈëµÄ¾µÏñµÄbytes´óÐ¡
 
 Output:         none
-Return:         SEC_OK: OK  SEC_ERROR: ERRORï¿½ï¿½
+Return:         SEC_OK: OK  SEC_ERROR: ERRORÂë
 ******************************************************************************/
 static int load_data_to_secos(const char* file_name, u32 offset, u32 size,
             const struct image_type_name* image, bool is_sec)
@@ -524,15 +524,15 @@ static int load_data_to_secos(const char* file_name, u32 offset, u32 size,
       {
           is_compress_check_need = 1;
       }
-    /* ï¿½ï¿½È¡Ö¸ï¿½ï¿½Æ«ï¿½Æµï¿½Ö¸ï¿½ï¿½ï¿½ï¿½Ð¡ */
+    /* ¶ÁÈ¡Ö¸¶¨Æ«ÒÆµÄÖ¸¶¨´óÐ¡ */
     if(0 != offset)
     {
         skip_offset = offset;
         remain_bytes = (int)size;
     }
-    else    /* ï¿½ï¿½È¡ï¿½ï¿½ï¿½ï¿½ï¿½Ä¼ï¿½ */
+    else    /* ¶ÁÈ¡Õû¸öÎÄ¼þ */
     {
-        is_compress_check_need = 1; /* Ö»ï¿½Ð´ï¿½ï¿½ï¿½Ê¼Î»ï¿½Ã¼ï¿½ï¿½ï¿½ï¿½ï¿½Òªï¿½ï¿½ï¿½ï¿½Ç·ï¿½ï¿½ï¿½gzipï¿½ï¿½Í· */
+        is_compress_check_need = 1; /* Ö»ÓÐ´ÓÆðÊ¼Î»ÖÃ¼ÓÔØÐèÒª¼ì²éÊÇ·ñÓÐgzipµÄÍ· */
         remain_bytes = get_file_size(file_name);
         if (remain_bytes <=0)
         {
@@ -552,7 +552,7 @@ static int load_data_to_secos(const char* file_name, u32 offset, u32 size,
         }
     }
 
-    /* ï¿½ï¿½ï¿½ï¿½È¡ï¿½Ä´ï¿½Ð¡ï¿½Ç·ñ³¬¹ï¿½ddrï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð¡ */
+    /* ¼ì²é¶ÁÈ¡µÄ´óÐ¡ÊÇ·ñ³¬¹ýddr·ÖÇø´óÐ¡ */
     if((u32)remain_bytes > image->ddr_size)
     {
         sec_print_err("remain_bytes larger than ddr size:  remain_bytes 0x%x > ddr_size 0x%x!\n", remain_bytes, image->ddr_size);
@@ -576,7 +576,7 @@ static int load_data_to_secos(const char* file_name, u32 offset, u32 size,
         if ((is_compress_check_need) && (readed_bytes >= 10)) {
             is_compress_check_need = 0;
             if (gzip_header_check((unsigned char*)SECBOOT_BUFFER)) {
-                /* ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½gzipï¿½ï¿½Ê½ï¿½ï¿½Ñ¹ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½DDRï¿½Õ¼ï¿½ï¿½ï¿½ï¿½Î»ï¿½ï¿½ */
+                /* ½«Õû¸ögzip¸ñÊ½µÄÑ¹Ëõ¾µÏñ·ÅÔÚDDR¿Õ¼ä½áÊøÎ»ÖÃ */
                 load_position_offset = (u32)(image->ddr_size - (u32)remain_bytes);
             }
         }
@@ -706,7 +706,7 @@ static int get_dtb_entry(unsigned int modemid, unsigned int num, struct modem_dt
     sec_id[2] = MODEMID_M_BITS(modemid);
     sec_id[3] = MODEMID_L_BITS(modemid);
 
-    /* ï¿½ï¿½È¡ï¿½ï¿½modemidÆ¥ï¿½ï¿½ï¿½acore/ccore dt_entry Ö¸ï¿½ï¿½,ï¿½ï¿½ï¿½ï¿½dtctoolï¿½ï¿½modem config.dtsï¿½Ð½ï¿½boardidï¿½ï¿½ï¿½ï¿½Îªï¿½ï¿½Ó¦modem_idÖµ */
+    /* »ñÈ¡ÓëmodemidÆ¥ÅäµÄacore/ccore dt_entry Ö¸Õë,¸´ÓÃdtctool£¬modem config.dtsÖÐ½«boardidÅäÖÃÎª¶ÔÓ¦modem_idÖµ */
     for (i = 0; i < num; i++)
     {
         if ((dt_entry_ptr->boardid[0] == sec_id[0]) &&
@@ -763,7 +763,7 @@ static s32 load_and_verify_dtb_data(void)
     }
     sec_print_info("find file %s, is_sec: %d\n", file_name, is_sec);
 
-       /* ï¿½ï¿½È«ï¿½æ±¾ï¿½ï¿½ï¿½ï¿½sec VRLÍ· */
+       /* °²È«°æ±¾Ìø¹ýsec VRLÍ· */
     if(is_sec)
     {
         offset = VRL_SIZE;
@@ -797,7 +797,7 @@ static s32 load_and_verify_dtb_data(void)
        goto err_out;
     }
       offset -= sizeof(struct modem_dt_table_t);
-    /* ï¿½ï¿½Òªmaskï¿½ï¿½ï¿½ï¿½Æµï¿½Û°ï¿½IDï¿½Å»ï¿½modemidï¿½ï¿½bit[9:0] */
+    /* ÐèÒªmaskµôÉäÆµ¿Û°åIDºÅ»òmodemidµÄbit[9:0] */
     modem_id = bsp_get_version_info()->board_id_udp_masked;
     sec_print_err("modem_id 0x%x \n", modem_id);
 
@@ -810,7 +810,7 @@ static s32 load_and_verify_dtb_data(void)
         goto err_out;
     }
 
-    /* ï¿½ï¿½È«ï¿½æ±¾ï¿½ï¿½Ê¹ï¿½ï¿½ï¿½ï¿½Ç©ï¿½ï¿½ */
+    /* °²È«°æ±¾ÇÒÊ¹ÄÜÁËÇ©Ãû */
     if(is_sec && 0 != dt_entry_ptr.vrl_size)
     {
         /*load vrl data to sec os*/
@@ -865,11 +865,11 @@ err_out:
 }
 
 /*****************************************************************************
- ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½  : Modemï¿½ï¿½Ø¾ï¿½ï¿½ï¿½ï¿½ï¿½Ø½Ó¿ï¿½
- ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½  : Modemï¿½ï¿½Ø¾ï¿½ï¿½ï¿½ï¿½ï¿½Ø½Ó¿ï¿½
- ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½  : ï¿½ï¿½
- ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½  : ï¿½ï¿½
- ï¿½ï¿½ ï¿½ï¿½ Öµ  : ï¿½É¹ï¿½ï¿½ï¿½ï¿½ï¿½OK,Ê§ï¿½Ü·ï¿½ï¿½ï¿½ERROR
+ º¯ Êý Ãû  : ModemÏà¹Ø¾µÏñ¼ÓÔØ½Ó¿Ú
+ ¹¦ÄÜÃèÊö  : ModemÏà¹Ø¾µÏñ¼ÓÔØ½Ó¿Ú
+ ÊäÈë²ÎÊý  : ÎÞ
+ Êä³ö²ÎÊý  : ÎÞ
+ ·µ »Ø Öµ  : ³É¹¦·µ»ØOK,Ê§°Ü·µ»ØERROR
 *****************************************************************************/
 int bsp_load_modem_images(void)
 {
@@ -936,11 +936,11 @@ error:
 }
 
 /*****************************************************************************
- ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½  : was.imgï¿½ï¿½tas.imgï¿½È¶ï¿½Ì¬ï¿½ï¿½ï¿½Ø¾ï¿½ï¿½ï¿½Ó¿ï¿½
- ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½  : Modemï¿½ï¿½Ø¾ï¿½ï¿½ï¿½ï¿½ï¿½Ø½Ó¿ï¿½
- ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½  : ï¿½ï¿½
- ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½  : ï¿½ï¿½
- ï¿½ï¿½ ï¿½ï¿½ Öµ  : ï¿½É¹ï¿½ï¿½ï¿½ï¿½ï¿½OK,Ê§ï¿½Ü·ï¿½ï¿½ï¿½ERROR
+ º¯ Êý Ãû  : was.img¡¢tas.imgµÈ¶¯Ì¬¼ÓÔØ¾µÏñ½Ó¿Ú
+ ¹¦ÄÜÃèÊö  : ModemÏà¹Ø¾µÏñ¼ÓÔØ½Ó¿Ú
+ ÊäÈë²ÎÊý  : ÎÞ
+ Êä³ö²ÎÊý  : ÎÞ
+ ·µ »Ø Öµ  : ³É¹¦·µ»ØOK,Ê§°Ü·µ»ØERROR
 *****************************************************************************/
 int bsp_load_modem_single_image(enum SVC_SECBOOT_IMG_TYPE ecoretype, u32 run_addr, u32 ddr_size)
 {

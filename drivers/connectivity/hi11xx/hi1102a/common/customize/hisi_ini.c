@@ -53,7 +53,7 @@ static int32 ko_read_line(INI_FILE *fp, char *addr)
     int8  auc_tmp[MAX_READ_LINE_NUM] = {0};
     int32 cnt = 0;
 
-    l_ret = kernel_read(fp, auc_tmp, MAX_READ_LINE_NUM, &fp->f_pos);
+    l_ret = kernel_read(fp, fp->f_pos, auc_tmp, MAX_READ_LINE_NUM);
     if (0 > l_ret)
     {
         INI_ERROR("kernel_line read l_ret < 0");
@@ -939,7 +939,7 @@ int8 *get_str_from_file(int8 *pc_file_path, const int8 *pc_mask_str, const int8 
     INI_INFO("open file %s success to find str \"%s\"!", pc_file_path, pc_mask_str);
     uc_str_check_len = OAL_STRLEN(pc_mask_str);
     /* 由于每次比较都会留uc_str_check_len不比较所以不是0 */
-    while (uc_str_check_len != (ret =kernel_read(fp, ac_read_buf, INI_KERNEL_READ_LEN, &fp->f_pos)))
+    while (uc_str_check_len != (ret =kernel_read(fp, fp->f_pos, ac_read_buf, INI_KERNEL_READ_LEN)))
     {
         for (loop = 0; loop < INI_KERNEL_READ_LEN-uc_str_check_len; loop++)
         {

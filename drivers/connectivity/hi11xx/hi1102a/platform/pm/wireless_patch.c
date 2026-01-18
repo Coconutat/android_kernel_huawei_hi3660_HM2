@@ -949,7 +949,7 @@ int32 patch_read_patch(int8 *buf, int32 len, OS_KERNEL_FILE_STRU *fp)
         return -EFAIL;
     }
 
-    rdlen = kernel_read(fp, buf, len, &fp->f_pos);
+    rdlen = kernel_read(fp, fp->f_pos, buf, len);
     if (rdlen > 0)
     {
         fp->f_pos += rdlen;
@@ -1779,7 +1779,7 @@ int32 patch_read_cfg(uint8 *cfg_path, uint8 *read_buf)
     }
 
     OS_MEM_SET(read_buf, 0, READ_CFG_BUF_LEN);
-    l_ret = kernel_read(fp, read_buf, READ_CFG_BUF_LEN, &fp->f_pos);
+    l_ret = kernel_read(fp, fp->f_pos, read_buf, READ_CFG_BUF_LEN);
 
     filp_close(fp, NULL);
     fp = NULL;

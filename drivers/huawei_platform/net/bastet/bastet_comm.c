@@ -320,7 +320,7 @@ static int get_more_data(uint8_t *firstdata)
 			return -ENOMEM;
 		}
 
-		ret = kernel_read(dev_filp, buf->data, BST_MAX_READ_PAYLOAD, (loff_t[]){offset});
+		ret = kernel_read(dev_filp, offset, buf->data, BST_MAX_READ_PAYLOAD);
 		BASTET_LOGI("read %d", ret);
 
 		if (ret > 0 && ret < BST_MAX_READ_PAYLOAD) {
@@ -386,7 +386,7 @@ static int get_event(void)
 		return -ENOMEM;
 	}
 
-	size = kernel_read(dev_filp, buf, BST_MAX_READ_PAYLOAD, (loff_t[]){offset});
+	size = kernel_read(dev_filp, offset, buf, BST_MAX_READ_PAYLOAD);
 	BASTET_LOGI("read %d", size);
 
 	if (size > 0 && size < BST_MAX_READ_PAYLOAD) {

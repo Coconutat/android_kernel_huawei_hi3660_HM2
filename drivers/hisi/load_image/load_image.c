@@ -373,9 +373,9 @@ int bsp_read_bin(const char *partion_name, unsigned int offset,
 	}
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0))
-	ret = kernel_read(fp, length, &read_offset, (loff_t[]){buffer});
+	ret = kernel_read(fp, buffer, length, &read_offset);
 #else
-	ret = kernel_read(fp, buffer, length, (loff_t[]){read_offset});
+	ret = kernel_read(fp, read_offset, buffer, length);
 #endif
 	if (ret != length) {
 		sec_print_err("read ops failed, ret=0x%x, len=0x%x!\n", ret, length);

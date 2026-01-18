@@ -11,7 +11,7 @@ extern "C" {
 
 
 /*****************************************************************************
-  1 Í·Ä¼
+  1 ÆäËûÍ·ÎÄ¼þ°üº¬
 *****************************************************************************/
 /*lint -e322*/
 #include <linux/compiler.h>
@@ -43,9 +43,9 @@ extern "C" {
 /*lint +e322*/
 
 /*****************************************************************************
-  2 ê¶¨
+  2 ºê¶¨Òå
 *****************************************************************************/
-/* 32Ö½Ð¡×ª */
+/* 32×Ö½ÚÐò´óÐ¡¶Ë×ª»» */
 #define OAL_SWAP_BYTEORDER_32(_val)        \
         ((((_val) & 0x000000FF) << 24) +     \
         (((_val) & 0x0000FF00) << 8) +       \
@@ -54,14 +54,14 @@ extern "C" {
 
 #define OAL_CONST                                   const
 
-/* È¡CORE ID */
+/* »ñÈ¡CORE ID */
 #if (_PRE_MULTI_CORE_MODE_OFFLOAD_DMAC == _PRE_MULTI_CORE_MODE)
 #define OAL_GET_CORE_ID()    (0)
-#else                                   /* offloadÜ¹ */
+#else                                   /* ·Çoffload¼Ü¹¹ */
 #ifdef _PRE_WLAN_FEATURE_SMP_SUPPORT
 #define OAL_GET_CORE_ID()    smp_processor_id()
 #else
-#define OAL_GET_CORE_ID()    (0)        /* ÒªE5Æ½Ì¨Ê¹ */
+#define OAL_GET_CORE_ID()    (0)        /* Ö÷Òª¸øE5Æ½Ì¨Ê¹ÓÃ */
 #endif
 #endif
 
@@ -76,17 +76,17 @@ typedef loff_t                   oal_file_pos;
 #define OAL_FUNC_NAME           __func__
 #define OAL_RET_ADDR            ((oal_ulong)__builtin_return_address(0))
 
-/* Ö·Ö¸Ê½Ï³Ò»Ö· */
+/* ½«¼¸¸ö×Ö·û´®°´ÕÕÖ¸¶¨¸ñÊ½ºÏ³ÉÒ»¸ö×Ö·û´® */
 #define OAL_SPRINTF             snprintf
 #define OAL_SSCANF              sscanf
 
-/* Ú´ */
+/* ÄÚ´æ¶ÁÆÁÕÏ */
 #define OAL_RMB()               rmb()
 
-/* Ú´Ð´ */
+/* ÄÚ´æÐ´ÆÁÕÏ */
 #define OAL_WMB()               wmb()
 
-/* Ú´ */
+/* ÄÚ´æÆÁÕÏ */
 #define OAL_MB()                mb()
 
 #define OAL_OFFSET_OF          offsetof
@@ -111,7 +111,7 @@ typedef loff_t                   oal_file_pos;
 
 #define OAL_VSPRINTF            vsnprintf
 
-/* E5Æ½Ì¨Ã£×¢â£¬hostÆ½Ì¨Í¬MEM_BASE_ADDRÒªÞ¸ */
+/* E5Æ½Ì¨ÃèÊö·ûÓÃ£¬×¢Òâ£¬host²àÆ½Ì¨²»Í¬£¬MEM_BASE_ADDRÐèÒªÐÞ¸Ä */
 #if(_PRE_TARGET_PRODUCT_TYPE_E5 == _PRE_CONFIG_TARGET_PRODUCT)
 extern oal_uint32 gul_dscr_fstvirt_addr;
 extern oal_uint32 gul_dscr_fstphy_addr;
@@ -129,9 +129,9 @@ extern oal_uint32 gul_dscr_fstvirt_addr;
 extern oal_uint32 gul_dscr_fstphy_addr;
 
 #ifdef _PRE_CPE_711_PLATFORM
-#define  OAL_PLAT_MEM_BASE_ADDR  0x15E00000   /* DDRÊ¼Ö·0xA0000000 - V200Ð¾Æ¬Ö·Æ«0x40000000 */
+#define  OAL_PLAT_MEM_BASE_ADDR  0x15E00000   /* DDRÆðÊ¼µØÖ·0xA0000000 - V200Ð¾Æ¬ÎïÀíµØÖ·Æ«ÒÆ0x40000000 */
 #elif defined _PRE_CPE_722_PLATFORM
-#define  OAL_PLAT_MEM_BASE_ADDR  0x60000000   /* DDRÊ¼Ö·0x55E00000 - V200Ð¾Æ¬Ö·Æ«0x40000000 */
+#define  OAL_PLAT_MEM_BASE_ADDR  0x60000000   /* DDRÆðÊ¼µØÖ·0x55E00000 - V200Ð¾Æ¬ÎïÀíµØÖ·Æ«ÒÆ0x40000000 */
 #endif
 
 #define OAL_DSCR_VIRT_TO_PHY(_virt_addr)    (((oal_uint)(_virt_addr) - (gul_dscr_fstvirt_addr)) + (gul_dscr_fstphy_addr) - OAL_PLAT_MEM_BASE_ADDR)
@@ -149,7 +149,7 @@ extern oal_uint32 gul_dscr_fstphy_addr;
 #define OAL_DSCR_PHY_TO_VIRT(_phy_addr)     phys_to_virt((_phy_addr) + OAL_PLAT_MEM_BASE_ADDR)
 #endif
 
-/* Ö·Ö·Ö®×ª,Îªnetbuf */
+/* ÎïÀíµØÖ·ºÍÐéÄâµØÖ·Ö®¼äµÄ×ª»»,×÷ÎªnetbufÓÃ */
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,38))
 #define OAL_VIRT_TO_PHY_ADDR(_virt_addr)            (virt_to_phys((const volatile void *)(_virt_addr)) - OAL_PLAT_MEM_BASE_ADDR)
 #else
@@ -184,7 +184,7 @@ typedef struct kobject              oal_kobject;
 
 /* hi1102-cb for sys interface  51/02 */
 
-/*size1size2, size1/2Ê¹sizeof(a)*/
+/*¼ì²ésize1²»´óÓÚsize2, ÆäÖÐsize1/2¿ÉÒÔÊ¹ÓÃsizeof(a)*/
 #define     SIZE_OF_SIZE1_NOT_LARGER_THAN_SIZE2_BY_NAME(name ,size1, size2) \
 static inline char size_of_##name##_size1_not_larger_than_size2(void) \
 { \
@@ -192,7 +192,7 @@ static inline char size_of_##name##_size1_not_larger_than_size2(void) \
     return __dummy1[0]; \
 }
 
-/*á¹¹Ä´Ð¡Ç·ñ²»´Ø¶Öµ*/
+/*¼ì²é½á¹¹ÌåµÄ´óÐ¡ÊÇ·ñ²»´óÓÚÌØ¶¨Öµ*/
 #define    SIZE_OF_TYPE_NOT_LARGER_THAN_DETECT(type, size) \
 static inline char size_of_##type##_not_larger_than_##size(void) \
 { \
@@ -213,41 +213,41 @@ static inline char size_of_##type##_not_larger_than_##size(void) \
 
 
 /*****************************************************************************
-  3 Ã¶Ù¶
+  3 Ã¶¾Ù¶¨Òå
 *****************************************************************************/
 
 /*****************************************************************************
-  4 È«Ö±
-*****************************************************************************/
-
-
-/*****************************************************************************
-  5 Ï¢Í·
+  4 È«¾Ö±äÁ¿ÉùÃ÷
 *****************************************************************************/
 
 
 /*****************************************************************************
-  6 Ï¢
+  5 ÏûÏ¢Í·¶¨Òå
 *****************************************************************************/
 
 
 /*****************************************************************************
-  7 STRUCT
+  6 ÏûÏ¢¶¨Òå
 *****************************************************************************/
 
 
 /*****************************************************************************
-  8 UNION
+  7 STRUCT¶¨Òå
 *****************************************************************************/
 
 
 /*****************************************************************************
-  9 OTHERS
+  8 UNION¶¨Òå
 *****************************************************************************/
 
 
 /*****************************************************************************
-  10 
+  9 OTHERS¶¨Òå
+*****************************************************************************/
+
+
+/*****************************************************************************
+  10 º¯ÊýÉùÃ÷
 *****************************************************************************/
 
 /* #define random_ether_addr(addr) eth_random_addr(addr) */
@@ -367,9 +367,9 @@ OAL_STATIC OAL_INLINE oal_int32  oal_file_read(oal_file_stru *file,
 {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0))
     loff_t pos = 0;
-    return kernel_read(file, ul_count, &pos, (loff_t[]){pc_buf});
+    return kernel_read(file, pc_buf, ul_count, &pos);
 #else
-    return kernel_read(file, pc_buf, ul_count, (loff_t[]){0});
+    return kernel_read(file, 0, pc_buf, ul_count);
 #endif
 }
 
@@ -379,9 +379,9 @@ OAL_STATIC OAL_INLINE oal_int32  oal_file_read_ext(oal_file_stru *file,
                                                 oal_uint32 ul_count)
 {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0))
-    return kernel_read(file, ul_count, &pos, (loff_t[]){pc_buf});
+    return kernel_read(file, pc_buf, ul_count, &pos);
 #else
-    return kernel_read(file, pc_buf, ul_count, (loff_t[]){pos});
+    return kernel_read(file, pos, pc_buf, ul_count);
 #endif
 }
 
@@ -573,7 +573,7 @@ OAL_STATIC OAL_INLINE unsigned long long oal_simple_strtoull(const oal_int8 *cp,
 
 OAL_STATIC OAL_INLINE oal_int  oal_strtol(OAL_CONST oal_int8 *pc_nptr, oal_int8 **ppc_endptr, oal_int32 l_base)
 {
-    /* Õ¸ */
+    /* Ìø¹ý¿Õ¸ñ */
     while (' ' == (*pc_nptr))
     {
         pc_nptr++;
@@ -612,7 +612,7 @@ OAL_STATIC OAL_INLINE oal_uint32  oal_kallsyms_lookup_name(OAL_CONST oal_uint8 *
 OAL_STATIC OAL_INLINE oal_void oal_dump_stack(oal_void)
 {
 #if(_PRE_CONFIG_TARGET_PRODUCT != _PRE_TARGET_PRODUCT_TYPE_WS835DMB)
-    //835Æ·dump_stacká´¥ÏµÍ³
+    //835²úÆ·µ÷ÓÃdump_stack»á´¥·¢ÏµÍ³ÖØÆô
     dump_stack();
 #endif
 }
@@ -627,7 +627,7 @@ OAL_STATIC OAL_INLINE oal_void  oal_msleep(oal_uint32 ul_usecs)
 OAL_STATIC OAL_INLINE oal_void  oal_usleep_range(oal_ulong min_us, oal_ulong max_us)
 {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 44))
-    usleep_range(min_us, max_us);/*Î¢î¼¶Ë¯ß£Ã³CPU*/
+    usleep_range(min_us, max_us);/*Î¢Ãî¼¶Ë¯Ãß£¬¿ÉÄÜÈÃ³öCPU*/
 #else
     OAL_REFERENCE(max_us);
     oal_udelay(min_us);
