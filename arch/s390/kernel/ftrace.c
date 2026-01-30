@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Dynamic function tracer architecture backend.
  *
  * Copyright IBM Corp. 2009,2014
@@ -17,7 +17,6 @@
 #include <trace/syscall.h>
 #include <asm/asm-offsets.h>
 #include <asm/cacheflush.h>
-#include <linux/set_memory.h>
 #include "entry.h"
 
 /*

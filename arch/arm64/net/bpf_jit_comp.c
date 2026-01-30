@@ -1,4 +1,4 @@
-﻿/*
+/*
  * BPF JIT compiler for ARM64
  *
  * Copyright (C) 2014-2016 Zi Shen Lim <zlim.lnx@gmail.com>
@@ -26,7 +26,6 @@
 
 #include <asm/byteorder.h>
 #include <asm/cacheflush.h>
-#include <linux/set_memory.h>
 #include <asm/debug-monitors.h>
 
 #include "bpf_jit.h"

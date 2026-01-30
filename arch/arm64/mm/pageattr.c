@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -125,6 +125,7 @@ int set_memory_x(unsigned long addr, int numpages)
 }
 EXPORT_SYMBOL_GPL(set_memory_x);
 
+
 int set_memory_valid(unsigned long addr, int numpages, int enable)
 {
 	if (enable)
@@ -138,9 +139,18 @@ int set_memory_valid(unsigned long addr, int numpages, int enable)
 }
 
 #ifdef CONFIG_DEBUG_PAGEALLOC
-void __kernel_map_pages(struct page* page, int numpages, int enable)
+void __kernel_map_pages(struct page *page, int numpages, int enable)
 {
-	set_memory_valid((unsigned long)page_address(page), numpages, enable);
+	unsigned long addr = (unsigned long) page_address(page);
+
+	if (enable)
+		__change_memory_common(addr, PAGE_SIZE * numpages,
+					__pgprot(PTE_VALID),
+					__pgprot(0));
+	else
+		__change_memory_common(addr, PAGE_SIZE * numpages,
+					__pgprot(0),
+					__pgprot(PTE_VALID));
 }
 #ifdef CONFIG_HIBERNATION
 /*

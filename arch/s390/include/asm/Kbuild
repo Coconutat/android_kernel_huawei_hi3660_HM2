@@ -1,6 +1,5 @@
-﻿
-generic-y += asm-offsets.h
-generic-y += cacheflush.h
+
+
 generic-y += clkdev.h
 generic-y += export.h
 generic-y += irq_work.h

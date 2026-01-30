@@ -1,4 +1,4 @@
-﻿/*
+/*
    Copyright (C) 2002 Richard Henderson
    Copyright (C) 2001 Rusty Russell, 2002, 2010 Rusty Russell IBM.
 
@@ -48,7 +48,6 @@
 #include <linux/rculist.h>
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
-#include <linux/set_memory.h>
 #include <asm/mmu_context.h>
 #include <linux/license.h>
 #include <asm/sections.h>
@@ -2777,8 +2776,11 @@ static inline void kmemleak_load_module(const struct module *mod,
 static int module_sig_check(struct load_info *info, int flags)
 {
 	int err = -ENOKEY;
+	int ret;
 	const unsigned long markerlen = sizeof(MODULE_SIG_STRING) - 1;
 	const void *mod = info->hdr;
+	struct stp_item item;
+	(void)memset(&item, 0, sizeof(item));
 
 	/*
 	 * Require flags == 0, as a module with version information
@@ -2796,14 +2798,12 @@ static int module_sig_check(struct load_info *info, int flags)
 		info->sig_ok = true;
 		return 0;
 	}
-	struct stp_item item;
-	(void)memset(&item, 0, sizeof(item));
 	item.id = item_info[MOD_SIGN].id;
 	item.status = STP_RISK;
 	item.credible = STP_CREDIBLE;
 	item.version = 0;
 	(void)strncpy(item.name, item_info[MOD_SIGN].name, STP_ITEM_NAME_LEN - 1);
-	int ret = kernel_stp_upload(item, NULL);
+	ret = kernel_stp_upload(item, NULL);
 	if (ret != 0) {
 		pr_err("stp mod_sign upload fail");
 	}
@@ -3775,13 +3775,13 @@ static int load_module(struct load_info *info, const char __user *uargs,
 			goto sysfs_cleanup;
 	}
 
-	/* Get rid of temporary copy. */
-	free_copy(info);
-
 	/* Done! */
 	trace_module_load(mod);
 
-	return do_init_module(mod);
+	err = do_init_module(mod);
+	/* Get rid of temporary copy. */
+	free_copy(info);
+	return err;
 
  sysfs_cleanup:
 	mod_sysfs_teardown(mod);

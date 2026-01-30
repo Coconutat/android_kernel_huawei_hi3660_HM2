@@ -1,4 +1,4 @@
-﻿/*
+/*
  * CFI (Control Flow Integrity) error and slowpath handling
  *
  * Copyright (C) 2017 Google, Inc.
@@ -12,7 +12,6 @@
 #include <linux/spinlock.h>
 #include <asm/bug.h>
 #include <asm/cacheflush.h>
-#include <linux/set_memory.h>
 #include <asm/memory.h>
 
 /* Compiler-defined handler names */
