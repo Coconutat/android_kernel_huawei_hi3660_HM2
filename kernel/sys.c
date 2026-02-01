@@ -609,7 +609,8 @@ error:
  * This function implements a generic ability to update ruid, euid,
  * and suid.  This allows you to implement the 4.4 compatible seteuid().
  */
-#ifdef CONFIG_KSU
+
+#ifdef CONFIG_KSU_MANUAL_HOOK
 extern int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid);
 #endif
 
@@ -625,11 +626,10 @@ SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)
 	keuid = make_kuid(ns, euid);
 	ksuid = make_kuid(ns, suid);
 
-#ifdef CONFIG_KSU_SUSFS
-	if (ksu_handle_setresuid(ruid, euid, suid)) {
-		pr_info("Something wrong with ksu_handle_setresuid()\\n");
-	}
-#endif
+	#ifdef CONFIG_KSU_MANUAL_HOOK
+       (void)ksu_handle_setresuid(ruid, euid, suid);
+	#endif
+
 	if ((ruid != (uid_t) -1) && !uid_valid(kruid))
 		return -EINVAL;
 
