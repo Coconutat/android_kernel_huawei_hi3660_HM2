@@ -2287,7 +2287,7 @@ static u32 ptrace_parent_sid(struct task_struct *task)
 	return sid;
 }
 
-#ifdef CONFIG_KSU_MANUAL_HOOK
+#ifdef CONFIG_KSU_SUSFS
 extern bool is_ksu_transition(const struct task_security_struct *old_tsec, 
 				const struct task_security_struct *new_tsec);
 #endif
@@ -2327,7 +2327,7 @@ static int check_nnp_nosuid(const struct linux_binprm *bprm,
     }
 #endif
 
-	#ifdef CONFIG_KSU_MANUAL_HOOK
+	#ifdef CONFIG_KSU_SUSFS
 	if (is_ksu_transition(old_tsec, new_tsec))
 		return 0;
 	#endif
