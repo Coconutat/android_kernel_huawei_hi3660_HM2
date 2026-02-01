@@ -29,8 +29,9 @@ echo " A) Tags version (rsuntk)"
 echo " B) SukiSU Builtin (SukiSU-Ultra)"
 echo " C) Main version (rsuntk)"
 echo " D) Master version (backslashxx)"
+echo " E) ReSukiSU Builtin (ReSukiSU)"
 echo "-------------------------------------------------------"
-read -p "Enter your choice (A/B/C/D): " version
+read -p "Enter your choice (A/B/C/D/E): " version
 
 if [ -z "$version" ]; then
     echo "No version specified. Exiting."
@@ -61,6 +62,10 @@ case $version in
     [Dd]*)
         echo "Installing backslashxx KernelSU (Master)..."
         curl $CURL_OPTS "https://raw.githubusercontent.com/backslashxx/KernelSU/master/kernel/setup.sh" | bash -s master
+        ;;
+    [Ee]*)
+        echo "Installing ReSukiSU (Builtin)..."
+        curl $CURL_OPTS "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s builtin
         ;;
     *)
         echo "Invalid option: $version. Exiting."
