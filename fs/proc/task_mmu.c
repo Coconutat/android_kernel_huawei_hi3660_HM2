@@ -360,7 +360,9 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
 
 		// SUSFS Backport
 		#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-		if (unlikely(inode->i_mapping->flags & BIT_SUS_KSTAT)) {
+		if (inode->i_mapping &&
+			unlikely(test_bit(AS_FLAGS_SUS_KSTAT, &inode->i_mapping->flags) &&
+			susfs_is_current_proc_umounted_app()))
 			susfs_sus_ino_for_show_map_vma(inode->i_ino, &dev, &ino);
 			goto bypass_orig_flow;
 		}
@@ -845,9 +847,11 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 
 	// SUSFS Backport
 	#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-	if (vma->vm_file &&
-		unlikely(file_inode(vma->vm_file)->i_mapping->flags & BIT_SUS_MAPS) &&
-		susfs_is_current_proc_umounted())
+	if (vma->vm_file) {
+		struct inode *inode = file_inode(vma->vm_file);
+		if (inode->i_mapping &&
+			unlikely(test_bit(AS_FLAGS_SUS_MAP, &inode->i_mapping->flags) &&
+			susfs_is_current_proc_umounted_app()))
 	{
 		seq_printf(m,
 			"Size:           %8lu kB\n"
@@ -1618,17 +1622,20 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
 			end = end_vaddr;
 		down_read(&mm->mmap_sem);
 		ret = walk_page_range(start_vaddr, end, &pagemap_walk);
-		up_read(&mm->mmap_sem);
 #ifdef CONFIG_KSU_SUSFS_SUS_MAP
 		vma = find_vma(mm, start_vaddr);
 		if (vma && vma->vm_file) {
 			struct inode *inode = file_inode(vma->vm_file);
-			if (unlikely(inode->i_mapping->flags & BIT_SUS_MAPS) && susfs_is_current_proc_umounted()) {
+		if (inode->i_mapping &&
+			unlikely(test_bit(AS_FLAGS_SUS_MAP, &inode->i_mapping->flags) &&
+			susfs_is_current_proc_umounted_app()))
+			{
 				pm.show_pfn = false;
 				pm.buffer->pme = 0;
 			}
 		}
 #endif
+		up_read(&mm->mmap_sem);
 		start_vaddr = end;
 
 		len = min(count, PM_ENTRY_BYTES * pm.pos);

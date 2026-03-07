@@ -111,21 +111,21 @@ static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 
         #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
         mnt = real_mount(file->f_path.mnt);
-        if (likely(susfs_is_current_proc_umounted()) &&
-                    mnt->mnt_id >= DEFAULT_KSU_MNT_ID)
+		if (mnt->mnt_id >= DEFAULT_KSU_MNT_ID &&
+			likely(susfs_is_current_proc_umounted()))
         {
             struct path path;
             char *pathname = kmalloc(PAGE_SIZE, GFP_KERNEL);
             char *dpath;
             if (!pathname) {
-                goto out_seq_printf;
+                goto orig_flow;
             }
             dpath = d_path(&file->f_path, pathname, PAGE_SIZE);
             if (!dpath) {
-                goto out_free_pathname;
+                goto out_kfree;
             }
             if (kern_path(dpath, 0, &path)) {
-                goto out_free_pathname;
+                goto out_kfree;
             }
             
             /* 这里直接使用上面定义好的 mask */
@@ -135,15 +135,17 @@ static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
                
             show_mark_fhandle(m, path.dentry->d_inode);
             seq_putc(m, '\n');
-            iput(inode);
             path_put(&path);
             kfree(pathname);
+			iput(inode);
             return;
             
-        out_free_pathname:
+		out_path_put:
+			path_put(&path);
+		out_kfree:
             kfree(pathname);
         }
-        out_seq_printf:
+        orig_flow:
         #endif
 
         /*
