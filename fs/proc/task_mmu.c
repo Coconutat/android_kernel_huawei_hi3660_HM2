@@ -362,10 +362,10 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
 		#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 		if (inode->i_mapping &&
 			unlikely(test_bit(AS_FLAGS_SUS_KSTAT, &inode->i_mapping->flags) &&
-			susfs_is_current_proc_umounted_app()))
+			susfs_is_current_proc_umounted_app())){
 			susfs_sus_ino_for_show_map_vma(inode->i_ino, &dev, &ino);
 			goto bypass_orig_flow;
-		}
+			}
 		#endif
 
 		dev = inode->i_sb->s_dev;
@@ -858,8 +858,9 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 			"KernelPageSize: %8lu kB\n"
 			"MMUPageSize:    %8lu kB\n",
 			(vma->vm_end - vma->vm_start) >> 10,
-			4, 4);
+			4UL, 4UL); // 修复类型警告 (-Werror=format)
 		goto bypass_orig_flow;
+	}
 	}
 	#endif
 
