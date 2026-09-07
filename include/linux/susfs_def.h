@@ -2,10 +2,20 @@
 #define KSU_SUSFS_DEF_H
 
 #include <linux/bits.h>
+#include <linux/string.h>
 #include <linux/version.h> // We need check kernel version.
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)
 #include <linux/cred.h>
 #endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+#define d_in_lookup(dentry) (0)
+#define d_lookup_done(dentry) do {} while (0)
+#endif // to support 4.4 and older kernel
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
+#define GFP_KERNEL_ACCOUNT GFP_KERNEL
+#endif // to support 4.4 and older kernel
 
 /********/
 /* ENUM */
@@ -13,8 +23,8 @@
 /* shared with userspace ksu_susfs tool */
 #define SUSFS_MAGIC 0xFAFAFAFA
 #define CMD_SUSFS_ADD_SUS_PATH 0x55550
-#define CMD_SUSFS_SET_ANDROID_DATA_ROOT_PATH 0x55551
-#define CMD_SUSFS_SET_SDCARD_ROOT_PATH 0x55552
+#define CMD_SUSFS_SET_ANDROID_DATA_ROOT_PATH 0x55551 /* deprecated */
+#define CMD_SUSFS_SET_SDCARD_ROOT_PATH 0x55552 /* deprecated */
 #define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55553
 #define CMD_SUSFS_ADD_SUS_MOUNT 0x55560 /* deprecated */
 #define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x55561
@@ -46,17 +56,22 @@
 #define TRY_UMOUNT_DETACH 1 /* used by susfs_try_umount() */
 
 #define VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT 0x80000000 /* used for mounts that are unshared by ksu process */
-#define DEFAULT_KSU_MNT_ID 500000 /* used for mounts created or single cloned by ksu process */
-#define DEFAULT_KSU_MNT_GROUP_ID 5000 /* used by mount->mnt_group_id */
+#define DEFAULT_KSU_MNT_ID 2000000000 /* used for mounts created or single cloned by ksu process */
+#define DEFAULT_KSU_MNT_GROUP_ID 200000 /* used by mount->mnt_group_id */
 
+#ifndef FUSE_SUPER_MAGIC
+#define FUSE_SUPER_MAGIC 0x65735546
+#endif
 /*
- * inode->i_mapping->flags => A 'unsigned long' type storing flag 'AS_FLAGS_', bit 1 to 31 is not usable since 6.12
+ * inode->i_state => A 'unsigned long' type storing flag 'AS_FLAGS_', bit 1 to 31 is not usable since 6.12
  * nd->state => storing flag 'ND_STATE_'
  * nd->flags => storing flag 'ND_FLAGS_'
  * task_struct->thread_info.flags => storing flag 'TIF_'
  */
  // thread_info->flags is unsigned long :D
 #define TIF_PROC_UMOUNTED 33
+#define TIF_PROC_NO_SU 34
+#define TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT 35
 
 #define AS_FLAGS_SUS_PATH 33
 #define AS_FLAGS_SUS_MOUNT 34
@@ -69,6 +84,30 @@
 #define ND_FLAGS_LOOKUP_LAST		0x2000000
  
 #define MAGIC_MOUNT_WORKDIR "/debug_ramdisk/workdir"
+
+
+static inline bool susfs_starts_with(const char *str, const char *prefix) {
+	while (*prefix) {
+		if (*str++ != *prefix++)
+			return false;
+	}
+	return true;
+}
+
+static inline bool susfs_ends_with(const char *str, const char *suffix) {
+	size_t str_len, suffix_len;
+
+	if (!str || !suffix)
+		return false;
+
+	str_len = strlen(str);
+	suffix_len = strlen(suffix);
+
+	if (suffix_len > str_len)
+		return false;
+
+	return !strcmp(str + str_len - suffix_len, suffix);
+}
 
 /* From KernelSU */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)
@@ -111,20 +150,61 @@ int data_type, susfs_fname_t file_name, u32 cookie)
 #endif
 
 static inline bool susfs_is_current_proc_umounted(void) {
-	return test_ti_thread_flag(&current->thread_info, TIF_PROC_UMOUNTED);
+	return (likely(test_thread_flag(TIF_PROC_UMOUNTED)));
 }
 
 static inline void susfs_set_current_proc_umounted(void) {
-	set_ti_thread_flag(&current->thread_info, TIF_PROC_UMOUNTED);
+	set_thread_flag(TIF_PROC_UMOUNTED);
+}
+
+static inline void susfs_clear_current_proc_umounted(void) {
+	clear_thread_flag(TIF_PROC_UMOUNTED);
+}
+
+static inline bool susfs_is_current_proc_umounted_for_zygote_next(void) {
+	return (likely(test_thread_flag(TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT)));
+}
+
+static inline void susfs_set_current_proc_umounted_for_zygote_next(void) {
+	set_thread_flag(TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT);
+}
+
+static inline void susfs_clear_current_proc_umounted_for_zygote_next(void) {
+	clear_thread_flag(TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT);
 }
 
 static inline bool susfs_is_current_proc_umounted_app(void) {
-	return (test_ti_thread_flag(&current->thread_info, TIF_PROC_UMOUNTED) &&
+	return (likely(test_thread_flag(TIF_PROC_UMOUNTED)) &&
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)
-	__kuid_val(current_uid()) >= 10000);
+			__kuid_val(current_uid()) >= 10000);
 #else
-	current_uid().val >= 10000);
+			current_uid().val >= 10000);
 #endif
 }
 
+static inline bool susfs_is_current_proc_no_su(void) {
+	return (likely(test_thread_flag(TIF_PROC_NO_SU)));
+}
+
+static inline void susfs_set_current_proc_no_su(void) {
+	set_thread_flag(TIF_PROC_NO_SU);
+}
+
+static inline void susfs_clear_current_proc_no_su(void) {
+	clear_thread_flag(TIF_PROC_NO_SU);
+}
+
+#define SUSFS_IS_INODE_SUS_MAP(inode) \
+		inode && inode->i_mapping && \
+		unlikely(test_bit(AS_FLAGS_SUS_MAP, &inode->i_state)) && \
+		susfs_is_current_proc_umounted_app()
+
+#define SUSFS_IS_INODE_OPEN_REDIRECT_WITHOUT_UID_CHECK(inode) \
+		inode && inode->i_mapping && \
+		unlikely(test_bit(AS_FLAGS_OPEN_REDIRECT, &inode->i_state))
+
+#define SUSFS_IS_INODE_OPEN_REDIRECT(inode) \
+		inode && inode->i_mapping && \
+		unlikely(test_bit(AS_FLAGS_OPEN_REDIRECT, &inode->i_state)) && \
+		susfs_is_current_proc_umounted_app()
 #endif // #ifndef KSU_SUSFS_DEF_H
