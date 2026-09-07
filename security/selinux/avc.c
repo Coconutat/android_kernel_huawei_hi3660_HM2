@@ -138,10 +138,6 @@ static void avc_dump_av(struct audit_buffer *ab, u16 tclass, u32 av)
 
 	audit_log_format(ab, " }");
 }
-extern u32 susfs_ksu_sid;
-extern u32 susfs_priv_app_sid;
-bool susfs_is_avc_log_spoofing_enabled = false;
-#endif
 
 /**
  * avc_dump_query - Display a SID pair and a class in human-readable form.
@@ -830,6 +826,10 @@ noinline int slow_avc_audit(u32 ssid, u32 tsid, u16 tclass,
 		if (ret == 0)
 			ret = hw_hiview_selinux_avc_audit(a);
 	}
+#else
+	if (sdcard_sid && (tsid == sdcard_sid))
+		ret = 1;
+#endif
 	if (ret == 0)
 		common_lsm_audit(a, avc_audit_pre_callback, avc_audit_post_callback);
 
