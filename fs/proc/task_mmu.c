@@ -17,9 +17,6 @@
 #include <linux/shmem_fs.h>
 #include <linux/mm_inline.h>
 #include <linux/ctype.h>
-#if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP)
-#include <linux/susfs_def.h>
-#endif
 
 #include <asm/elf.h>
 #include <asm/uaccess.h>
@@ -338,7 +335,6 @@ static int is_stack(struct proc_maps_private *priv,
 }
 
 // SUSFS Backport
-#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 extern void susfs_sus_ino_for_show_map_vma(unsigned long ino, dev_t *out_dev, unsigned long *out_ino);
 #endif
 
@@ -359,22 +355,11 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
 		struct inode *inode = file_inode(vma->vm_file);
 
 		// SUSFS Backport
-		#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-		if (inode->i_mapping &&
-			unlikely(test_bit(AS_FLAGS_SUS_KSTAT, &inode->i_mapping->flags) &&
-			susfs_is_current_proc_umounted_app())){
-			susfs_sus_ino_for_show_map_vma(inode->i_ino, &dev, &ino);
-			goto bypass_orig_flow;
-			}
-		#endif
 
 		dev = inode->i_sb->s_dev;
 		ino = inode->i_ino;
 
 		// SUSFS Backport
-		#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-		bypass_orig_flow:
-		#endif
 
 		pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
 	}
@@ -665,12 +650,6 @@ static void smaps_pmd_entry(pmd_t *pmd, unsigned long addr,
 		VM_BUG_ON_PAGE(1, page);
 	smaps_account(mss, page, true, pmd_young(*pmd), pmd_dirty(*pmd));
 }
-#else
-static void smaps_pmd_entry(pmd_t *pmd, unsigned long addr,
-		struct mm_walk *walk)
-{
-}
-#endif
 
 static int smaps_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 			   struct mm_walk *walk)
@@ -846,8 +825,7 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 	show_map_vma(m, vma, is_pid);
 
 	// SUSFS Backport
-	#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-	if (vma->vm_file) {
+		if (vma->vm_file) {
 		struct inode *inode = file_inode(vma->vm_file);
 		if (inode->i_mapping &&
 			unlikely(test_bit(AS_FLAGS_SUS_MAP, &inode->i_mapping->flags) &&
@@ -912,9 +890,6 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 	arch_show_smap(m, vma);
 	show_smap_vma_flags(m, vma);
 	// SUSFS Backport
-	#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-	bypass_orig_flow:
-	#endif
 	m_cache_vma(m, vma);
 	return 0;
 }
@@ -1067,12 +1042,6 @@ static inline void clear_soft_dirty(struct vm_area_struct *vma,
 		set_pte_at(vma->vm_mm, addr, pte, ptent);
 	}
 }
-#else
-static inline void clear_soft_dirty(struct vm_area_struct *vma,
-		unsigned long addr, pte_t *pte)
-{
-}
-#endif
 
 #if defined(CONFIG_MEM_SOFT_DIRTY) && defined(CONFIG_TRANSPARENT_HUGEPAGE)
 static inline void clear_soft_dirty_pmd(struct vm_area_struct *vma,
@@ -1563,7 +1532,6 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
 	unsigned long start_vaddr;
 	unsigned long end_vaddr;
 	int ret = 0, copied = 0;
-#ifdef CONFIG_KSU_SUSFS_SUS_MAP
 	struct vm_area_struct *vma;
 #endif
 
@@ -1623,19 +1591,6 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
 			end = end_vaddr;
 		down_read(&mm->mmap_sem);
 		ret = walk_page_range(start_vaddr, end, &pagemap_walk);
-#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-		vma = find_vma(mm, start_vaddr);
-		if (vma && vma->vm_file) {
-			struct inode *inode = file_inode(vma->vm_file);
-		if (inode->i_mapping &&
-			unlikely(test_bit(AS_FLAGS_SUS_MAP, &inode->i_mapping->flags) &&
-			susfs_is_current_proc_umounted_app()))
-			{
-				pm.show_pfn = false;
-				pm.buffer->pme = 0;
-			}
-		}
-#endif
 		up_read(&mm->mmap_sem);
 		start_vaddr = end;
 
@@ -1780,9 +1735,6 @@ cont:
 #ifdef CONFIG_HISI_SWAP_ZDATA
 	reclaimed = (int)reclaim_pages_from_list(&page_list, vma,
 				rp->hiber, &rp->nr_writedblock);
-#else
-	reclaimed = reclaim_pages_from_list(&page_list, vma);
-#endif
 	rp->nr_reclaimed += reclaimed;
 	rp->nr_to_reclaim -= reclaimed;
 	if (rp->nr_to_reclaim < 0)
