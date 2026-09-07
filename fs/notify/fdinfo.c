@@ -91,71 +91,81 @@ static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark, struc
 static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 #endif
 {
-	struct inotify_inode_mark *inode_mark;
-	struct inode *inode;
+    struct inotify_inode_mark *inode_mark;
+    struct inode *inode;
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-	struct mount *mnt = NULL;
+    struct mount *mnt = NULL;
 #endif
 
-	if (!(mark->flags & FSNOTIFY_MARK_FLAG_ALIVE) ||
-	    !(mark->flags & FSNOTIFY_MARK_FLAG_INODE))
-		return;
+    if (!(mark->flags & FSNOTIFY_MARK_FLAG_ALIVE) ||
+        !(mark->flags & FSNOTIFY_MARK_FLAG_INODE))
+        return;
 
-	inode_mark = container_of(mark, struct inotify_inode_mark, fsn_mark);
-	inode = igrab(mark->inode);
-	if (inode) {
-#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-		mnt = real_mount(file->f_path.mnt);
+    inode_mark = container_of(mark, struct inotify_inode_mark, fsn_mark);
+    inode = igrab(mark->inode);
+    if (inode) {
+        /* * [修改 1] 将 mask 的声明和赋值移到这里
+         * 这样 SUSFS 代码块和原生代码块都可以使用它，且不会重复定义
+         */
+        u32 mask = mark->mask & IN_ALL_EVENTS;
+
+        #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+        mnt = real_mount(file->f_path.mnt);
 		if (mnt->mnt_id >= DEFAULT_KSU_MNT_ID &&
 			likely(susfs_is_current_proc_umounted()))
-		{
-			struct path path;
-			char *pathname = kmalloc(PAGE_SIZE, GFP_KERNEL);
-			char *dpath;
-			if (!pathname) {
-				goto orig_flow;
-			}
-			dpath = d_path(&file->f_path, pathname, PAGE_SIZE);
-			if (!dpath) {
-				goto out_kfree;
-			}
-			if (kern_path(dpath, 0, &path)) {
-				goto out_kfree;
-			}
-			if (!path.dentry->d_inode) {
-				goto out_path_put;
-			}
-			seq_printf(m, "inotify wd:%x ino:%lx sdev:%x mask:%x ignored_mask:%x ",
-					inode_mark->wd, path.dentry->d_inode->i_ino, path.dentry->d_inode->i_sb->s_dev,
-					mark->mask & IN_ALL_EVENTS, mark->ignored_mask);
-			show_mark_fhandle(m, path.dentry->d_inode);
-			seq_putc(m, '\n');
-			path_put(&path);
-			kfree(pathname);
+        {
+            struct path path;
+            char *pathname = kmalloc(PAGE_SIZE, GFP_KERNEL);
+            char *dpath;
+            if (!pathname) {
+                goto orig_flow;
+            }
+            dpath = d_path(&file->f_path, pathname, PAGE_SIZE);
+            if (!dpath) {
+                goto out_kfree;
+            }
+            if (kern_path(dpath, 0, &path)) {
+                goto out_kfree;
+            }
+            
+            /* 这里直接使用上面定义好的 mask */
+            seq_printf(m, "inotify wd:%x ino:%lx sdev:%x mask:%x ignored_mask:%x ",
+               inode_mark->wd, path.dentry->d_inode->i_ino, path.dentry->d_inode->i_sb->s_dev,
+               mask, mark->ignored_mask);
+               
+            show_mark_fhandle(m, path.dentry->d_inode);
+            seq_putc(m, '\n');
+            path_put(&path);
+            kfree(pathname);
 			iput(inode);
-			return;
-out_path_put:
+            return;
+            
+		out_path_put:
 			path_put(&path);
-out_kfree:
-			kfree(pathname);
-		}
-orig_flow:
-#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+		out_kfree:
+            kfree(pathname);
+        }
+        orig_flow:
+        #endif
 
-		/*
-		 * IN_ALL_EVENTS represents all of the mask bits
-		 * that we expose to userspace.  There is at
-		 * least one bit (FS_EVENT_ON_CHILD) which is
-		 * used only internally to the kernel.
-		 */
-		u32 mask = mark->mask & IN_ALL_EVENTS;
-		seq_printf(m, "inotify wd:%x ino:%lx sdev:%x mask:%x ignored_mask:%x ",
-			   inode_mark->wd, inode->i_ino, inode->i_sb->s_dev,
-			   mask, mark->ignored_mask);
-		show_mark_fhandle(m, inode);
-		seq_putc(m, '\n');
-		iput(inode);
-	}
+        /*
+         * IN_ALL_EVENTS represents all of the mask bits
+         * that we expose to userspace.  There is at
+         * least one bit (FS_EVENT_ON_CHILD) which is
+         * used only internally to the kernel.
+         */
+         
+        /* * [修改 2] 删除了这里的 u32 mask = ... 定义
+         * 因为上面已经定义并赋值过了。
+         * 且标签 out_seq_printf 后面现在直接跟 seq_printf 语句，符合语法。
+         */
+        seq_printf(m, "inotify wd:%x ino:%lx sdev:%x mask:%x ignored_mask:%x ",
+               inode_mark->wd, inode->i_ino, inode->i_sb->s_dev,
+               mask, mark->ignored_mask);
+        show_mark_fhandle(m, inode);
+        seq_putc(m, '\n');
+        iput(inode);
+    }
 }
 
 void inotify_show_fdinfo(struct seq_file *m, struct file *f)

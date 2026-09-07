@@ -24,9 +24,6 @@
 #include <linux/ctype.h>
 #include <linux/slab.h>
 #include <linux/compiler.h>
-#ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-#include <linux/susfs_def.h>
-#endif // #ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
 
 #include <asm/sections.h>
 
@@ -594,6 +591,10 @@ static void *s_start(struct seq_file *m, loff_t *pos)
 static void s_stop(struct seq_file *m, void *p)
 {
 }
+
+#ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+extern bool susfs_starts_with(const char *str, const char *prefix);
+#endif
 
 static int s_show(struct seq_file *m, void *p)
 {
