@@ -43,6 +43,10 @@
 #include <asm/unistd.h>
 #include <asm/siginfo.h>
 #include <asm/cacheflush.h>
+#ifdef CONFIG_REKERNEL
+#include <uapi/asm/signal.h>
+#include <../drivers/rekernel/rekernel.h>
+#endif /* CONFIG_REKERNEL */
 #include "audit.h"	/* audit_signal_info() */
 
 #ifdef CONFIG_HUAWEI_KSTATE
@@ -1174,6 +1178,10 @@ int do_send_sig_info(int sig, struct siginfo *info, struct task_struct *p,
 {
 	unsigned long flags;
 	int ret = -ESRCH;
+#ifdef CONFIG_REKERNEL
+	if (sig == SIGKILL || sig == SIGTERM || sig == SIGABRT || sig == SIGQUIT)
+		rekernel_report(SIGNAL, sig, task_tgid_nr(current), current, task_tgid_nr(p), p, false, NULL);
+#endif /* CONFIG_REKERNEL */
 
 #ifdef CONFIG_HUAWEI_KSTATE
 	if (sig == SIGKILL || sig == SIGTERM || sig == SIGABRT || sig == SIGQUIT)
